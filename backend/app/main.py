@@ -50,7 +50,9 @@ from app.services.report_generator import generate_morning_report
 from app.services.scheduler import start_scheduler
 from app.services.tapetide_service import (
     get_quota_status, get_stock_enrichment, get_fii_dii_summary,
-    get_integrations_status, update_tapetide_token
+    get_integrations_status, update_tapetide_token,
+    get_macro_market_dashboard, audit_stock_on_demand,
+    get_fno_ban_summary, get_fpi_sectors_summary, get_market_deliveries_summary
 )
 
 logger = logging.getLogger(__name__)
@@ -325,9 +327,34 @@ def update_credentials_endpoint(
     return update_tapetide_token(token)
 
 
+@app.get("/api/market/macro-dashboard")
+def get_macro_market_dashboard_endpoint() -> Dict[str, Any]:
+    """Retrieves full institutional macro dashboard (FII/DII, FPI Sectors, High Deliveries, F&O Ban)."""
+    return get_macro_market_dashboard()
 
 
+@app.get("/api/market/fno-ban")
+def get_fno_ban_endpoint() -> Dict[str, Any]:
+    """Retrieves official exchange F&O ban watchlist and near-ban symbols (>75% MWPL)."""
+    return get_fno_ban_summary()
 
+
+@app.get("/api/market/fpi-sectors")
+def get_fpi_sectors_endpoint() -> Dict[str, Any]:
+    """Retrieves FPI sector capital allocations and fortnightly net flow trends."""
+    return get_fpi_sectors_summary()
+
+
+@app.get("/api/market/deliveries")
+def get_market_deliveries_endpoint() -> Dict[str, Any]:
+    """Retrieves top institutional accumulation stocks with >=50% delivery on ₹1 Cr+ volume."""
+    return get_market_deliveries_summary()
+
+
+@app.post("/api/intelligence/tapetide/{symbol}/deep-audit")
+def trigger_stock_deep_audit_endpoint(symbol: str) -> Dict[str, Any]:
+    """Manually triggers live on-demand Options IV and Promoter Pledge audit for a specific stock."""
+    return audit_stock_on_demand(symbol, force_refresh=True)
 
 
 @app.get("/api/scorecard")

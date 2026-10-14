@@ -2039,7 +2039,17 @@ function renderIntelligenceContent(data) {
                         DII: ${macroFlow.dii_net_cr ? (macroFlow.dii_net_cr > 0 ? '+' : '') + Number(macroFlow.dii_net_cr).toLocaleString() + ' Cr' : '+₹48,510 Cr'}
                     </div>
                 </div>
+        </div>
+
+        <!-- ON-DEMAND AUDIT BAR -->
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); border: 1px dashed var(--border-subtle); border-radius: 4px; padding: 6px 12px; margin-bottom: 12px;">
+            <div style="font-size: 10.5px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+                <span style="font-weight: 600; color: var(--text-secondary);">Derivatives &amp; Solvency Audit:</span>
+                <span>${opt.available ? 'Live Options IV &amp; Promoter Pledge Active (Cached)' : 'Using Local 14D ATR &amp; Solvency Gatekeeper (0 Calls)'}</span>
             </div>
+            <button id="btnOnDemandAudit" onclick="triggerTapetideDeepAudit('${data.symbol}')" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(16, 185, 129, 0.2)); border: 1px solid var(--accent-indigo); color: var(--text-primary); border-radius: 4px; font-size: 10.5px; font-weight: 600; padding: 4px 10px; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+                <span>⚡</span> ${opt.available ? 'Re-Audit (Cached)' : 'Run Live Tapetide Audit (1 Call)'}
+            </button>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
@@ -2113,6 +2123,26 @@ function renderIntelligenceContent(data) {
             <button class="btn btn-primary" onclick="closeIntelligenceModal(); openTransactionModal('${data.symbol}', ${data.cmp});">+ Record Trade</button>
         </div>
     `;
+}
+
+async function triggerTapetideDeepAudit(symbol) {
+    const btn = document.getElementById("btnOnDemandAudit");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span>⏳</span> Auditing ${symbol}...`;
+    }
+    try {
+        const cleanSym = symbol.toUpperCase().replace(".NS", "").trim();
+        const res = await fetch(`${API_BASE}/api/intelligence/tapetide/${cleanSym}/deep-audit`, { method: "POST" });
+        if (!res.ok) throw new Error("Deep audit request failed");
+        await openStockIntelligenceModal(cleanSym);
+    } catch (err) {
+        alert("Deep Audit Notice: " + err.message);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<span>⚡</span> Retry Audit`;
+        }
+    }
 }
 
 // --------------------------------------------------------------------------

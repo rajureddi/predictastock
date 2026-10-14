@@ -502,7 +502,13 @@ def generate_daily_recommendations(
     macro = get_nifty50_live_status()
     nifty_start_price = macro.get("nifty50_price")
 
-    
+    # High-Conviction Institutional Audit: Tapetide Options & Promoter Pledge for Top 5 Finalists
+    try:
+        from app.services.tapetide_service import audit_top_recommendations
+        top_picks = audit_top_recommendations(top_picks)
+    except Exception as e:
+        logger.warning(f"Tapetide top recommendations audit skipped or failed: {e}")
+
     saved_records = []
     for pick in top_picks:
         rec_id = str(uuid.uuid4())

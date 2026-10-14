@@ -341,6 +341,180 @@ def get_stock_enrichment(symbol: str) -> Dict[str, Any]:
     }
 
 
+def get_fpi_sectors_summary() -> Dict[str, Any]:
+    """
+    Retrieves foreign portfolio investor (FPI) sector-wise capital flows and AUM share.
+    Cached for 24 hours (consumes 1 call per day).
+    """
+    res = call_tapetide_tool("get_fpi_sectors", {}, ttl_hours=24)
+    if not res.get("available"):
+        return {"available": False, "sectors": []}
+
+    data = res.get("data", {})
+    sectors_raw = data.get("sectors", [])
+    summary_list = []
+    for s in sectors_raw[:8]:
+        summary_list.append({
+            "sector": s.get("sector"),
+            "aum_cr": s.get("aum"),
+            "fortnight_net_cr": s.get("fortnight_flow"),
+            "flow_trend": "Inflow" if (s.get("fortnight_flow") or 0) > 0 else "Outflow"
+        })
+
+    return {
+        "available": True,
+        "report_date": data.get("meta", {}).get("latest_report_date"),
+        "top_sectors": summary_list
+    }
+
+
+def get_market_deliveries_summary() -> Dict[str, Any]:
+    """
+    Retrieves latest session's highest delivery-% stocks (>=50%, traded value >= Rs 1 Cr).
+    Signals genuine institutional accumulation over intraday speculation.
+    Cached for 24 hours (consumes 1 call per day).
+    """
+    res = call_tapetide_tool("get_market_data", {"dataset": "deliveries"}, ttl_hours=24)
+    if not res.get("available"):
+        return {"available": False, "stocks": []}
+
+    data = res.get("data", {})
+    stocks_raw = data.get("stocks", [])
+    top_deliveries = []
+    for s in stocks_raw[:10]:
+        top_deliveries.append({
+            "symbol": s.get("symbol"),
+            "name": s.get("name"),
+            "sector": s.get("sector"),
+            "delivery_pct": s.get("delivery_pct"),
+            "traded_value_cr": round(float(s.get("delivery_value", 0)) / 10000000.0, 2)
+        })
+
+    return {
+        "available": True,
+        "date": data.get("delivery_date"),
+        "total_screened": data.get("total_stocks", 0),
+        "high_delivery_leaders": top_deliveries
+    }
+
+
+def get_fno_ban_summary() -> Dict[str, Any]:
+    """
+    Retrieves the official exchange F&O ban list and stocks near 80% MWPL.
+    Used as an immediate risk gatekeeper against short-squeeze traps.
+    Cached for 24 hours (consumes 1 call per day).
+    """
+    res = call_tapetide_tool("get_market_data", {"dataset": "fno_ban"}, ttl_hours=24)
+    if not res.get("available"):
+        return {"available": False, "banned_symbols": [], "near_ban_symbols": []}
+
+    data = res.get("data", {})
+    ban_symbols = data.get("ban_list", {}).get("symbols", [])
+    near_ban = []
+    for s in data.get("stocks", []):
+        if s.get("status") != "in_ban" and s.get("mwpl_pct", 0) >= 75.0:
+            near_ban.append({
+                "symbol": s.get("symbol"),
+                "mwpl_pct": round(float(s.get("mwpl_pct", 0)), 1)
+            })
+
+    return {
+        "available": True,
+        "as_of": data.get("as_of"),
+        "banned_symbols": ban_symbols,
+        "near_ban_symbols": near_ban[:6]
+    }
+
+
+def get_market_deals_summary() -> Dict[str, Any]:
+    """
+    Retrieves bulk & block deals executed over the last 7 trading days.
+    Cached for 24 hours (consumes 1 call per day).
+    """
+    res = call_tapetide_tool("get_market_data", {"dataset": "deals"}, ttl_hours=24)
+    if not res.get("available"):
+        return {"available": False, "deals": []}
+
+    data = res.get("data", {})
+    deals_list = data.get("deals", [])
+    top_deals = []
+    for d in deals_list[:8]:
+        top_deals.append({
+            "symbol": d.get("symbol"),
+            "client": d.get("client_name"),
+            "deal_type": d.get("deal_type"),
+            "action": d.get("buy_sell"),
+            "value_cr": round(float(d.get("value", 0)) / 10000000.0, 2),
+            "date": d.get("date")
+        })
+
+    return {
+        "available": True,
+        "latest_date": data.get("latest_date"),
+        "deals": top_deals
+    }
+
+
+def audit_stock_on_demand(symbol: str, force_refresh: bool = False) -> Dict[str, Any]:
+    """
+    User-initiated or top-5 recommendation audit for a single stock.
+    Explicitly retrieves live Options IV rank and Promoter Share Pledge.
+    Cached for 24 hours per stock (consumes max 2 calls upon first lookup).
+    """
+    clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
+    opt = get_options_analytics(clean_sym)
+    pledge = get_promoter_pledge_status(clean_sym)
+
+    return {
+        "symbol": clean_sym,
+        "audited": True,
+        "options": opt,
+        "governance": pledge,
+        "audited_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
+    }
+
+
+def audit_top_recommendations(recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Audits ONLY the top 5 finalized stock recommendations for the morning briefing.
+    Consumes at most 10 calls (5 stocks * 2 tools) per day, safely fitting within quota.
+    """
+    if not recommendations:
+        return []
+
+    enriched = []
+    for idx, rec in enumerate(recommendations):
+        if idx < 5:  # Strictly cap at top 5 to preserve quota
+            audit = audit_stock_on_demand(rec.get("symbol", ""))
+            opt = audit.get("options", {})
+            gov = audit.get("governance", {})
+
+            rec["tapetide_audited"] = True
+            rec["iv_rank"] = opt.get("iv_rank")
+            rec["iv_percentile"] = opt.get("iv_percentile")
+            rec["promoter_pledged_pct"] = gov.get("pledged_pct", 0.0)
+            rec["governance_flag"] = gov.get("governance_flag", "Normal")
+        enriched.append(rec)
+
+    return enriched
+
+
+def get_macro_market_dashboard() -> Dict[str, Any]:
+    """
+    Assembles a unified market-wide institutional dashboard combining FII/DII cash flows,
+    FPI sector rotation, high-delivery accumulation stocks, and the F&O ban watchlist.
+    Consumes at most 4 calls per day across the entire system.
+    """
+    return {
+        "fii_dii": get_fii_dii_summary(),
+        "fpi_sectors": get_fpi_sectors_summary(),
+        "deliveries": get_market_deliveries_summary(),
+        "fno_ban": get_fno_ban_summary(),
+        "deals": get_market_deals_summary(),
+        "quota": get_quota_status()
+    }
+
+
 def get_quota_status() -> Dict[str, Any]:
     """Returns real-time status of the Tapetide 50-call/day allocation."""
     used = get_calls_used_today()

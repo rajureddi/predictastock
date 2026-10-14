@@ -113,3 +113,52 @@ def test_no_unique_calls_per_stock():
     assert calls_after == calls_before, "get_stock_enrichment must not consume live calls on arbitrary stocks"
     assert enrichment["mode"] == "MACRO_ONLY_CONSERVATION"
 
+
+def test_macro_market_dashboard_endpoint():
+    """Verify /api/market/macro-dashboard returns all 4 market feeds and quota status."""
+    res = client.get("/api/market/macro-dashboard")
+    assert res.status_code == 200
+    data = res.json()
+    assert "fii_dii" in data
+    assert "fpi_sectors" in data
+    assert "deliveries" in data
+    assert "fno_ban" in data
+    assert "quota" in data
+    assert data["quota"]["daily_limit"] == 50
+
+
+def test_fno_ban_endpoint():
+    """Verify /api/market/fno-ban returns exchange ban list and near-ban symbols."""
+    res = client.get("/api/market/fno-ban")
+    assert res.status_code == 200
+    data = res.json()
+    assert "banned_symbols" in data
+    assert "near_ban_symbols" in data
+    assert isinstance(data["banned_symbols"], list)
+
+
+def test_deep_audit_endpoint():
+    """Verify /api/intelligence/tapetide/{symbol}/deep-audit returns audited options and governance."""
+    res = client.post("/api/intelligence/tapetide/RELIANCE/deep-audit")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["symbol"] == "RELIANCE"
+    assert data["audited"] is True
+    assert "options" in data
+    assert "governance" in data
+
+
+def test_top_recommendations_audit():
+    """Verify audit_top_recommendations enriches top 5 recommendations with options IV and pledge."""
+    from app.services.tapetide_service import audit_top_recommendations
+    mock_recs = [
+        {"symbol": "RELIANCE", "name": "Reliance Industries", "expected_target_price": 2800.0},
+        {"symbol": "TCS", "name": "Tata Consultancy Services", "expected_target_price": 4000.0}
+    ]
+    enriched = audit_top_recommendations(mock_recs)
+    assert len(enriched) == 2
+    assert enriched[0]["tapetide_audited"] is True
+    assert "iv_rank" in enriched[0]
+    assert "promoter_pledged_pct" in enriched[0]
+
+
