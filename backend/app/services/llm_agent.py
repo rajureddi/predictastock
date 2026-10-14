@@ -102,17 +102,19 @@ def _call_external_llm(prompt: str) -> Dict[str, Any] | None:
 
 def run_multi_agent_analyst_team(stock_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Simulates the 7 AI Analyst Agents from india-trade-cli:
-    1. Technical Analyst
-    2. Fundamental Analyst
-    3. Options & Volatility Analyst
-    4. News & Catalysts Analyst
-    5. Sentiment & Media Analyst
-    6. Sector Rotation Analyst
-    7. Risk Manager
-    
-    Uses external LLM (Groq / OpenAI / Gemini) if API keys are configured,
-    or falls back instantly to the grounded quantitative expert engine.
+    Multi-Perspective Quantitative & Qualitative Synthesis Engine:
+    Executes a structured multi-dimensional analytical prompt evaluating seven institutional perspectives:
+    1. Technical Structure & Moving Averages
+    2. Fundamental Statement Health & Solvency
+    3. Options Implied Volatility & Scenario Dispersion
+    4. News Catalysts & Orderbook Developments
+    5. Sentiment Polarity & Media Coverage
+    6. Sector Rotation Alignment
+    7. Quantitative Risk Management & ATR Stop-Loss Enforcement
+
+    Implementation Architecture:
+    - Structured single-call multi-perspective prompt sent to LLM endpoints (Groq / Gemini / OpenAI).
+    - Fully backed by an internal deterministic quantitative rule synthesizer for guaranteed uptime.
     """
     symbol = stock_data["symbol"]
     name = stock_data["name"]
@@ -198,7 +200,13 @@ def run_multi_agent_analyst_team(stock_data: Dict[str, Any]) -> Dict[str, Any]:
     """
 
     llm_result = _call_external_llm(llm_prompt)
-    if llm_result and "analysts" in llm_result and "debate" in llm_result:
+    if (
+        llm_result 
+        and "analysts" in llm_result 
+        and "debate" in llm_result 
+        and isinstance(llm_result["debate"], dict) 
+        and "trade_plan" in llm_result["debate"]
+    ):
         return llm_result
 
 

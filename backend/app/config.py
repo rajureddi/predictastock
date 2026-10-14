@@ -65,7 +65,29 @@ WEIGHT_NEWS_SENTIMENT = 0.20          # 20% News Sentiment & Catalysts (<= -0.40
 WEIGHT_MACRO_FLOW = 0.10              # 10% Macro Regime (Nifty 50 trend & India VIX)
 WEIGHT_FUNDAMENTAL = 0.00             # Solvency Gatekeeper (D/E & ROE penalties; doesn't penalize growth momentum P/E)
 
-# Default App Settings
-HOST = "127.0.0.1"
-PORT = 8000
-DEBUG = True
+# Default App & Deployment Security Settings
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+DEBUG = os.getenv("DEBUG", "true" if ENVIRONMENT == "development" else "false").lower() in ("true", "1")
+HOST = os.getenv("HOST", "127.0.0.1")
+PORT = int(os.getenv("PORT", "8000"))
+
+# Allowed CORS Origins (Configurable via ALLOWED_ORIGINS env var)
+ALLOWED_ORIGINS = [
+    orig.strip() for orig in os.getenv(
+        "ALLOWED_ORIGINS", 
+        "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",") if orig.strip()
+]
+
+# JWT Session & Token Configuration
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "predictastock_production_hardened_secret_key_v2.5")
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) # 24 Hours
+JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))         # 7 Days
+
+# Proposed Tier-1 Candidate Quality Filter Thresholds
+TIER1_MIN_COMPOSITE_SCORE = 78.0
+TIER1_MIN_DELIVERY_SURGE = 1.8
+TIER1_MIN_CMF = 0.12
+TIER1_REQUIRE_NIFTY_ABOVE_20DMA = True
+

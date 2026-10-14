@@ -161,6 +161,7 @@ def record_transaction(
     conn.close()
     
     return {
+        "id": t_id,
         "transaction_id": t_id,
         "symbol": clean_sym,
         "type": tx_type,
@@ -428,5 +429,6 @@ def delete_transaction(transaction_id: str, user_id: str = "default_trader") -> 
     return {
         "status": "SUCCESS",
         "transaction_id": transaction_id,
-        "deleted_count": deleted_count
+        "deleted_count": deleted_count,
+        "deleted": bool(deleted_count > 0)
     }

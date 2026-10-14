@@ -86,31 +86,50 @@ def update_scan_progress(
         SCAN_PROGRESS["updated_at"] = time.time()
 
 
-def purge_recommendations_for_date(cursor, rec_date_str: str):
+def supersede_previous_runs_for_date(
+    cursor, 
+    rec_date_str: str, 
+    new_run_id: str, 
+    new_version: int, 
+    reason: str = "Superseded by intraday rescan"
+):
     """
-    Safely unlinks foreign key references before deleting recommendations.
-    Prevents SQLite foreign key constraint failures.
+    Append-Only Architectural Protection: Never deletes sealed recommendation history.
+    Marks prior active runs for this date as SUPERSEDED and logs an immutable audit event in recommendation_audit_events.
     """
-    # 1. Unlink portfolio transactions
     cursor.execute("""
-        UPDATE portfolio_transactions 
-        SET recommendation_id = NULL 
-        WHERE recommendation_id IN (SELECT id FROM recommendations WHERE rec_date = ?)
+        SELECT id, symbol, run_id, status FROM recommendations
+        WHERE rec_date = ? AND (is_superseded = 0 OR is_superseded IS NULL)
     """, (rec_date_str,))
-    
-    # 2. Delete child forecast evaluations
+    prior_recs = cursor.fetchall()
+
+    for prec in prior_recs:
+        audit_id = str(uuid.uuid4())
+        cursor.execute("""
+            INSERT INTO recommendation_audit_events (
+                id, recommendation_id, run_id, event_type, old_status, new_status, reason, created_at
+            ) VALUES (?, ?, ?, 'SUPERSEDED', ?, 'SUPERSEDED', ?, ?)
+        """, (
+            audit_id, prec["id"], prec["run_id"] if prec["run_id"] else "legacy_run",
+            prec["status"], f"{reason} (New Run {new_run_id} v{new_version})",
+            datetime.now().isoformat()
+        ))
+
     cursor.execute("""
-        DELETE FROM forecast_evaluations 
-        WHERE recommendation_id IN (SELECT id FROM recommendations WHERE rec_date = ?)
+        UPDATE recommendations 
+        SET is_superseded = 1 
+        WHERE rec_date = ? AND (is_superseded = 0 OR is_superseded IS NULL)
     """, (rec_date_str,))
-    
-    cursor.execute("DELETE FROM forecast_evaluations WHERE start_date = ?", (rec_date_str,))
-    
-    # 3. Delete parent recommendations
-    cursor.execute("DELETE FROM recommendations WHERE rec_date = ?", (rec_date_str,))
+
+    cursor.execute("""
+        UPDATE recommendation_runs
+        SET status = 'SUPERSEDED'
+        WHERE rec_date = ? AND status = 'ACTIVE'
+    """, (rec_date_str,))
 
 
-def score_single_stock(symbol: str) -> Optional[Dict[str, Any]]:
+
+def score_single_stock(symbol: str, as_of_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Run 4-pillar high-alpha analysis for an Indian market equity:
     - 45% Technical Momentum & Relative Strength
@@ -120,6 +139,16 @@ def score_single_stock(symbol: str) -> Optional[Dict[str, Any]]:
     - Solvency Gatekeeper / Penalties (ROE < 5% or D/E > 2.0)
     - Top-Down Sector Rotation Alignment (+5 if sector leading, -5 if lagging)
     - Minimum ₹5 Crore daily rupee turnover filter
+    
+    Dynamic Pillar Weight Renormalization Rule:
+    When news is UNAVAILABLE_PIT (or empty):
+    - Solvency Gatekeeper remains active.
+    - Exclude unavailable news pillar from the weighted average.
+    - Renormalize remaining verified PIT pillars so weights sum to 1.0:
+      Tech = 0.45 / 0.80 = 56.25%
+      MoneyFlow = 0.25 / 0.80 = 31.25%
+      Macro = 0.10 / 0.80 = 12.50%
+    - Record scoring_mode = 'PIT_RENORMALIZED_NO_NEWS' vs 'FULL_4_PILLAR_PIT'.
     """
     meta = get_symbol_info(symbol)
     df = get_stock_history(symbol, period="6mo")
@@ -127,6 +156,12 @@ def score_single_stock(symbol: str) -> Optional[Dict[str, Any]]:
     if df.empty or len(df) < 25:
         logger.warning(f"Insufficient historical data for {symbol}, skipping per data integrity rules.")
         return None
+
+    if as_of_date:
+        as_of_str = str(as_of_date)[:10]
+        df = df[df.index <= as_of_str]
+        if df.empty or len(df) < 20:
+            return None
         
     from app.services.market_data import get_nse_bhavcopy_for_symbol
     bhav_info = get_nse_bhavcopy_for_symbol(symbol)
@@ -149,18 +184,27 @@ def score_single_stock(symbol: str) -> Optional[Dict[str, Any]]:
     mf_score = tech["money_flow_score"]
     
     # Requirement 4: Solvency Gatekeeper (Fundamentals)
-    from app.services.fundamentals import fetch_company_fundamentals
-    fund_data = fetch_company_fundamentals(symbol) or {}
+    if as_of_date:
+        from app.services.fundamentals import get_point_in_time_fundamentals
+        fund_data = get_point_in_time_fundamentals(symbol, as_of_date=as_of_date)
+        fundamentals_provenance = fund_data.get("fundamentals_provenance", "QUARTERLY_PIT_45D_LAG")
+    else:
+        from app.services.fundamentals import fetch_company_fundamentals
+        fund_data = fetch_company_fundamentals(symbol) or {}
+        fundamentals_provenance = "LIVE_OFFICIAL_FILINGS"
+
     de_ratio = fund_data.get("debt_to_equity")
     roe_val = fund_data.get("roe")
     
-    solvency_penalty = 0.0
+    solvency_penalty = fund_data.get("solvency_penalty", 0.0)
     solvency_notes = []
     if de_ratio is not None and de_ratio > 2.0:
-        solvency_penalty += 10.0
+        if solvency_penalty == 0.0:
+            solvency_penalty += 10.0
         solvency_notes.append(f"Elevated D/E: {de_ratio:.2f}x")
     if roe_val is not None and roe_val < 5.0:
-        solvency_penalty += 10.0
+        if solvency_penalty == 0.0:
+            solvency_penalty += 10.0
         solvency_notes.append(f"Depressed ROE: {roe_val:.1f}%")
         
     signals = fund_data.get("signals") or []
@@ -169,16 +213,22 @@ def score_single_stock(symbol: str) -> Optional[Dict[str, Any]]:
     if solvency_notes:
         fund_summary += f" [Solvency Warning: {', '.join(solvency_notes)}]"
     
-    # Pillar 3: News & Sentiment (Google News RSS)
-    news_items = fetch_stock_news_rss(symbol, max_items=4)
-    sent_score, sent_label, catalysts, risks = analyze_sentiment(news_items)
-    
-    # Veto Rule check: Disqualify on severe negative news
-    if sent_score <= -0.4:
-        logger.info(f"VETO RULE TRIGGERED on {symbol}: News sentiment is {sent_score} ({sent_label}). Disqualified.")
-        return None
-        
-    news_multiplier = (sent_score + 1.0) * 50.0 # Maps [-1, 1] to [0, 100]
+    # Pillar 3: News & Sentiment (Google News RSS with optional as_of_date)
+    news_items = fetch_stock_news_rss(symbol, max_items=4, as_of_date=as_of_date)
+    if news_items:
+        sent_score, sent_label, catalysts, risks = analyze_sentiment(news_items)
+        # Veto Rule check: Disqualify on severe negative news
+        if sent_score <= -0.4:
+            logger.info(f"VETO RULE TRIGGERED on {symbol}: News sentiment is {sent_score} ({sent_label}). Disqualified.")
+            return None
+        news_multiplier = (sent_score + 1.0) * 50.0 # Maps [-1, 1] to [0, 100]
+        has_news = True
+        news_provenance = "FULL_4_PILLAR_PIT" if as_of_date else "LIVE_GOOGLE_NEWS"
+    else:
+        sent_score, sent_label, catalysts, risks = 0.0, "No Recent Headlines", [], []
+        news_multiplier = 50.0
+        has_news = False
+        news_provenance = "UNAVAILABLE_PIT"
     
     # Pillar 4: Macro & Market Condition
     macro = get_nifty50_live_status()
@@ -197,15 +247,21 @@ def score_single_stock(symbol: str) -> Optional[Dict[str, Any]]:
     elif sector_rs < 0.0:
         sector_boost = -5.0
 
-    # Composite Score (0 to 100) with Re-weighted 45/25/20/10 structure
-    composite_score = round(
-        (tech_score * WEIGHT_TECHNICAL) +
-        (mf_score * WEIGHT_MONEY_FLOW) +
-        (news_multiplier * WEIGHT_NEWS_SENTIMENT) +
-        (macro_score * WEIGHT_MACRO_FLOW) +
-        sector_boost - solvency_penalty,
-        1
-    )
+    # Dynamic Pillar Weight Renormalization
+    if not has_news or news_provenance == "UNAVAILABLE_PIT":
+        # Renormalized: Tech = 56.25%, MoneyFlow = 31.25%, Macro = 12.50%
+        scoring_mode = "PIT_RENORMALIZED_NO_NEWS"
+        base_composite = (tech_score * 0.45 + mf_score * 0.25 + macro_score * 0.10) / 0.80
+    else:
+        scoring_mode = "FULL_4_PILLAR_PIT" if as_of_date else "FULL_4_PILLAR_LIVE"
+        base_composite = (
+            (tech_score * WEIGHT_TECHNICAL) +
+            (mf_score * WEIGHT_MONEY_FLOW) +
+            (news_multiplier * WEIGHT_NEWS_SENTIMENT) +
+            (macro_score * WEIGHT_MACRO_FLOW)
+        )
+
+    composite_score = round(base_composite + sector_boost - solvency_penalty, 1)
     composite_score = float(np.clip(composite_score, 10.0, 95.0))
     
     # Two-Sided Mathematical 5-Day ATR Volatility Cone & Directional Scenario
@@ -282,7 +338,12 @@ def score_single_stock(symbol: str) -> Optional[Dict[str, Any]]:
         "sentiment_score": sent_score,
         "sentiment_label": sent_label,
         "supporting_reasons": catalysts[:3],
-        "downside_risks": risks[:3]
+        "downside_risks": risks[:3],
+        "scoring_mode": scoring_mode,
+        "news_provenance": news_provenance,
+        "fundamentals_provenance": fundamentals_provenance,
+        "quarter_used": fund_data.get("quarter_used"),
+        "as_of_date": as_of_date
     }
 
 
@@ -411,13 +472,36 @@ def generate_daily_recommendations(
         conn.close()
         return []
 
-    # If force_refresh, safely purge previous recommendations without foreign key violations
-    if force_refresh:
-        purge_recommendations_for_date(cursor, rec_date_str)
+    # Append-only run resolution
+    cursor.execute("SELECT MAX(version) FROM recommendation_runs WHERE rec_date = ?", (rec_date_str,))
+    row_ver = cursor.fetchone()
+    current_max_ver = (row_ver[0] if row_ver and row_ver[0] is not None else 0)
+    new_version = current_max_ver + 1
+    run_id = f"run_{rec_date_str.replace('-', '')}_{uuid.uuid4().hex[:8]}"
+    now_ts = datetime.now().isoformat()
+
+    # If force_refresh or previous active recommendations exist, supersede them without deletion
+    if current_max_ver > 0:
+        supersede_previous_runs_for_date(
+            cursor, 
+            rec_date_str, 
+            new_run_id=run_id, 
+            new_version=new_version, 
+            reason="User or scheduler initiated fresh intraday scan"
+        )
         conn.commit()
+
+    # Insert immutable run header into recommendation_runs
+    cursor.execute("""
+    INSERT INTO recommendation_runs (
+        run_id, rec_date, version, generated_count, universe_size, model_version, status, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'v2.5-AppendOnlyQuant', 'ACTIVE', ?)
+    """, (run_id, rec_date_str, new_version, len(top_picks), total_universe_count, now_ts))
+    conn.commit()
 
     macro = get_nifty50_live_status()
     nifty_start_price = macro.get("nifty50_price")
+
     
     saved_records = []
     for pick in top_picks:
@@ -451,8 +535,8 @@ def generate_daily_recommendations(
             atr_14, volatility_5d_pct, support_level, resistance_level,
             cmf_20, vol_surge, deliv_per, deliv_surge, rs_20d, ai_thesis,
             confidence_text, model_version, created_at, run_id, direction, composite_score,
-            delivery_source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            delivery_source, version, is_superseded
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             rec_id, pick["symbol"], pick["name"], "NSE", pick["sector"],
             rec_date_str, pick["reference_price"], ref_timestamp,
@@ -470,7 +554,8 @@ def generate_daily_recommendations(
             "Under 5-day out-of-sample forward evaluation",
             "v2.3-HighAlphaQuant", datetime.now().isoformat(), run_id, pick["direction"],
             pick.get("composite_score", 65.0),
-            pick.get("delivery_source", "NSE_BHAVCOPY")
+            pick.get("delivery_source", "NSE_BHAVCOPY"),
+            new_version, 0
         ))
         
         # Insert pending evaluation record
@@ -493,10 +578,19 @@ def generate_daily_recommendations(
         pick_with_id["id"] = rec_id
         pick_with_id["rec_date"] = rec_date_str
         pick_with_id["run_id"] = run_id
+        pick_with_id["version"] = new_version
+        pick_with_id["is_superseded"] = 0
         saved_records.append(pick_with_id)
         
     conn.commit()
     conn.close()
+
+    try:
+        from app.services.paper_trader import record_paper_recommendations, process_paper_trading_cycle
+        record_paper_recommendations(saved_records, run_id=run_id)
+        process_paper_trading_cycle()
+    except Exception as pte:
+        logger.warning(f"Auto-recording to paper trading ledger skipped: {pte}")
 
     update_scan_progress(
         is_active=False,
@@ -514,47 +608,55 @@ def generate_daily_recommendations(
 
 def reset_daily_recommendations(target_date: str = None) -> List[Dict[str, Any]]:
     """
-    Purges today's recommendation batch and re-evaluates all benchmark market leaders.
-    Ranks strictly by accuracy, multi-factor scores, and real mathematical criteria.
+    Append-Only Rescan: Initiates a fresh recommendation run without deleting sealed prior history.
+    Prior runs for this date are marked SUPERSEDED with audit events.
     """
     rec_date_str = target_date or date.today().isoformat()
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    purge_recommendations_for_date(cursor, rec_date_str)
-    conn.commit()
-    conn.close()
-
-    logger.info(f"Resetting recommendations for {rec_date_str} and re-scanning entire NIFTY market universe.")
+    logger.info(f"Initiating append-only rescan for {rec_date_str} across the active universe.")
     return generate_daily_recommendations(
         target_date=rec_date_str,
         force_refresh=True
     )
 
 
-def get_latest_recommendations(limit: int = 5) -> List[Dict[str, Any]]:
-    """Retrieve the most recent daily recommendation batch with strictly distinct stock symbols."""
+def get_latest_recommendations(
+    limit: int = 5,
+    rec_date: Optional[str] = None,
+    run_id: Optional[str] = None,
+    include_superseded: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Retrieve recommendations adhering to the append-only model.
+    Defaults to the latest ACTIVE run's records.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Find most recent recommendation date
-    cursor.execute("SELECT DISTINCT rec_date FROM recommendations ORDER BY rec_date DESC LIMIT 1")
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return []
-        
-    latest_date = row["rec_date"]
-    cursor.execute("""
-    SELECT r.* FROM recommendations r
-    INNER JOIN (
-        SELECT symbol, MAX(created_at) as max_created
-        FROM recommendations
-        WHERE rec_date = ?
-        GROUP BY symbol
-    ) latest ON r.symbol = latest.symbol AND r.created_at = latest.max_created
-    ORDER BY r.expected_appreciation_pct DESC
-    LIMIT ?
-    """, (latest_date, limit))
+    if run_id:
+        cursor.execute("SELECT * FROM recommendations WHERE run_id = ? ORDER BY composite_score DESC LIMIT ?", (run_id, limit))
+    elif rec_date:
+        if include_superseded:
+            cursor.execute("SELECT * FROM recommendations WHERE rec_date = ? ORDER BY version DESC, composite_score DESC LIMIT ?", (rec_date, limit))
+        else:
+            cursor.execute("SELECT * FROM recommendations WHERE rec_date = ? AND (is_superseded = 0 OR is_superseded IS NULL) ORDER BY composite_score DESC LIMIT ?", (rec_date, limit))
+    else:
+        cursor.execute("SELECT DISTINCT rec_date FROM recommendations WHERE (is_superseded = 0 OR is_superseded IS NULL) ORDER BY rec_date DESC LIMIT 1")
+        row = cursor.fetchone()
+        if not row:
+            # Fallback to any date if none are active
+            cursor.execute("SELECT DISTINCT rec_date FROM recommendations ORDER BY rec_date DESC LIMIT 1")
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return []
+                
+        latest_date = row["rec_date"]
+        cursor.execute("""
+        SELECT r.* FROM recommendations r
+        WHERE r.rec_date = ? AND (r.is_superseded = 0 OR r.is_superseded IS NULL)
+        ORDER BY r.composite_score DESC
+        LIMIT ?
+        """, (latest_date, limit))
     
     recs = []
     for r in cursor.fetchall():
@@ -565,3 +667,4 @@ def get_latest_recommendations(limit: int = 5) -> List[Dict[str, Any]]:
         
     conn.close()
     return recs
+

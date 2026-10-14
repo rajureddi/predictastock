@@ -158,9 +158,9 @@ def calculate_delivery_metrics(
     """
     # 1. Check if direct bhavcopy_data dictionary was provided
     if bhavcopy_data and isinstance(bhavcopy_data, dict):
-        deliv_qty = bhavcopy_data.get("deliv_qty")
-        deliv_per = bhavcopy_data.get("deliv_per")
-        sma_deliv_20 = bhavcopy_data.get("sma_deliv_20")
+        deliv_qty = bhavcopy_data.get("deliv_qty") if "deliv_qty" in bhavcopy_data else bhavcopy_data.get("DELIV_QTY")
+        deliv_per = bhavcopy_data.get("deliv_per") if "deliv_per" in bhavcopy_data else bhavcopy_data.get("DELIV_PER")
+        sma_deliv_20 = bhavcopy_data.get("sma_deliv_20") if "sma_deliv_20" in bhavcopy_data else bhavcopy_data.get("SMA_DELIV_20")
         
         # Rule 3: Compute deliv_surge accurately with single-day Bhavcopy
         if sma_deliv_20 is None or sma_deliv_20 <= 0:
@@ -434,13 +434,17 @@ def compute_all_indicators(
     elif vol_surge < 0.6:
         mf_score -= 10    # Dry volume / lack of interest
 
-    # Institutional delivery surge bonus
-    if deliv_surge >= 1.4 and deliv_per >= 48.0:
-        mf_score += 8     # Delivery accumulation confirmation
-    elif deliv_surge < 0.6 and deliv_per < 30.0:
+    # Institutional delivery surge bonus — STRICTLY enforced: proxy metrics CANNOT qualify for exchange delivery bonus
+    if is_bhavcopy_actual and deliv_surge >= 1.4 and deliv_per >= 48.0:
+        mf_score += 8     # Verified exchange delivery accumulation confirmation
+    elif is_bhavcopy_actual and deliv_surge < 0.6 and deliv_per < 30.0:
         mf_score -= 5
+    elif not is_bhavcopy_actual and deliv_surge >= 1.4:
+        # Transparently log that synthetic proxy cannot satisfy verified delivery bonus
+        pass
         
     mf_score = float(np.clip(mf_score, 10.0, 95.0))
+
     
     # Signal categorization
     if tech_score >= 68 and mf_score >= 60 and cmp >= sma_20 and not is_overextended:

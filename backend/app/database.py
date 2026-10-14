@@ -12,13 +12,15 @@ from app.config import DB_PATH, DATA_DIR
 
 
 def get_db_connection() -> sqlite3.Connection:
-    """Create and return an optimized SQLite connection with WAL mode."""
+    """Create and return an optimized SQLite connection with WAL mode and multi-worker concurrency hardening."""
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=30000;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA busy_timeout=10000;")
     conn.execute("PRAGMA foreign_keys=ON;")
     return conn
+
 
 
 def init_db() -> None:
@@ -221,13 +223,197 @@ def init_db() -> None:
     );
     """)
 
+    # 11. Distributed Scheduler Leases (Multi-Worker Execution Coordination)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS scheduler_leases (
+        job_name TEXT PRIMARY KEY,
+        lease_owner TEXT NOT NULL,
+        acquired_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        status TEXT NOT NULL, -- 'ACQUIRED', 'COMPLETED', 'FAILED'
+        idempotency_key TEXT,
+        last_error TEXT,
+        updated_at TEXT NOT NULL
+    );
+    """)
+
+    # 12. JWT Revoked Tokens Table (Token Invalidation & Blacklist)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS revoked_tokens (
+        token_jti TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        revoked_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    );
+    """)
+
+    # 13. Append-Only Recommendation Runs (Versioned Batches)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS recommendation_runs (
+        run_id TEXT PRIMARY KEY,
+        rec_date TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        generated_count INTEGER NOT NULL DEFAULT 0,
+        universe_size INTEGER NOT NULL DEFAULT 0,
+        model_version TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE', 'SUPERSEDED'
+        created_at TEXT NOT NULL
+    );
+    """)
+
+    # 14. Recommendation Audit Events (Audit Trail for Corrections and Supersessions)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS recommendation_audit_events (
+        id TEXT PRIMARY KEY,
+        recommendation_id TEXT NOT NULL,
+        run_id TEXT,
+        event_type TEXT NOT NULL, -- 'SEALED', 'SUPERSEDED', 'DOWNGRADED', 'INVALIDATED'
+        old_status TEXT,
+        new_status TEXT,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    """)
+
+    # 15. Point-in-Time Historical Market Bars (Split-Adjusted OHLCV + Official NSE Bhavcopy Delivery)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS historical_market_bars (
+        symbol TEXT NOT NULL,
+        trading_date TEXT NOT NULL,
+        open REAL NOT NULL,
+        high REAL NOT NULL,
+        low REAL NOT NULL,
+        close REAL NOT NULL,
+        volume INTEGER NOT NULL,
+        adj_close REAL,
+        adjustment_method TEXT NOT NULL DEFAULT 'SPLIT_DIVIDEND_ADJUSTED',
+        deliv_qty REAL DEFAULT 0.0,
+        deliv_per REAL DEFAULT 0.0,
+        delivery_source TEXT NOT NULL DEFAULT 'SYNTHETIC_PROXY', -- 'NSE_BHAVCOPY' vs 'SYNTHETIC_PROXY'
+        report_date TEXT,
+        retrieval_timestamp TEXT NOT NULL,
+        quality_status TEXT NOT NULL DEFAULT 'VERIFIED',
+        nifty50_close REAL,
+        nifty50_sma20 REAL,
+        isin TEXT,
+        PRIMARY KEY (symbol, trading_date)
+    );
+    """)
+
+    # 16. Prospective Forward Paper-Trading Ledger
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS paper_trading_cohorts (
+        cohort_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        model_version TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE', 'COMPLETED', 'ARCHIVED'
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        initial_capital REAL NOT NULL DEFAULT 1000000.0,
+        cash_balance REAL NOT NULL DEFAULT 1000000.0,
+        portfolio_equity REAL NOT NULL DEFAULT 1000000.0,
+        max_positions INTEGER NOT NULL DEFAULT 5,
+        created_at TEXT NOT NULL
+    );
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS paper_recommendations (
+        id TEXT PRIMARY KEY,
+        cohort_id TEXT NOT NULL,
+        run_id TEXT,
+        symbol TEXT NOT NULL,
+        signal_date TEXT NOT NULL,
+        signal_price REAL NOT NULL,
+        signal_direction TEXT NOT NULL,
+        composite_score REAL NOT NULL,
+        model_version TEXT NOT NULL,
+        planned_entry_price REAL NOT NULL,
+        planned_stop_loss REAL NOT NULL,
+        planned_target_price REAL NOT NULL,
+        features_json TEXT,
+        position_qty INTEGER DEFAULT 0,
+        allocated_capital REAL DEFAULT 0.0,
+        status TEXT NOT NULL DEFAULT 'PENDING_OPEN', -- 'PENDING_OPEN', 'ACTIVE', 'REJECTED', 'CLOSED'
+        rejection_reason TEXT,
+        entry_date TEXT,
+        entry_price REAL,
+        exit_date TEXT,
+        exit_price REAL,
+        exit_reason TEXT,
+        gross_pnl REAL DEFAULT 0.0,
+        net_pnl REAL DEFAULT 0.0,
+        net_return_pct REAL DEFAULT 0.0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (cohort_id) REFERENCES paper_trading_cohorts(cohort_id)
+    );
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS paper_execution_events (
+        id TEXT PRIMARY KEY,
+        recommendation_id TEXT NOT NULL,
+        event_type TEXT NOT NULL, -- 'SIGNAL_GENERATED', 'ORDER_FILLED', 'ORDER_REJECTED', 'STOP_TRIGGERED', 'TARGET_HIT', 'TRAILING_STOP_MOVED', 'SETTLED_T5'
+        event_timestamp TEXT NOT NULL,
+        event_price REAL,
+        details_json TEXT,
+        FOREIGN KEY (recommendation_id) REFERENCES paper_recommendations(id)
+    );
+    """)
+
+    # 17. Point-in-Time Historical News Cache (Strict Date-Bounded Headlines with PubDate Verification)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS historical_news_cache (
+        symbol TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        title TEXT NOT NULL,
+        pub_date TEXT,
+        link TEXT,
+        source TEXT,
+        sentiment_score REAL DEFAULT 0.0,
+        retrieved_at TEXT NOT NULL,
+        PRIMARY KEY (symbol, as_of_date, title)
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hist_news_sym_date ON historical_news_cache (symbol, as_of_date);")
+
+    # Dynamic Column Migrations for Append-Only Ledger
+    cursor.execute("PRAGMA table_info(recommendations);")
+    rec_cols = {row["name"] for row in cursor.fetchall()}
+    if "run_id" not in rec_cols:
+        cursor.execute("ALTER TABLE recommendations ADD COLUMN run_id TEXT;")
+    if "version" not in rec_cols:
+        cursor.execute("ALTER TABLE recommendations ADD COLUMN version INTEGER DEFAULT 1;")
+    if "is_superseded" not in rec_cols:
+        cursor.execute("ALTER TABLE recommendations ADD COLUMN is_superseded INTEGER DEFAULT 0;")
+
+    cursor.execute("PRAGMA table_info(forecast_evaluations);")
+    eval_cols = {row["name"] for row in cursor.fetchall()}
+    if "run_id" not in eval_cols:
+        cursor.execute("ALTER TABLE forecast_evaluations ADD COLUMN run_id TEXT;")
+
+    cursor.execute("PRAGMA table_info(users);")
+    user_cols = {row["name"] for row in cursor.fetchall()}
+    if "token_version" not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 1;")
+
     # Useful Indexes
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_rec_date ON recommendations(rec_date);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_rec_symbol ON recommendations(symbol);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_rec_run_id ON recommendations(run_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trans_symbol ON portfolio_transactions(symbol);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_eval_status ON forecast_evaluations(status);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_obs ON price_observations(symbol, observation_date);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_nse_name ON nse_equities(name);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_revoked_exp ON revoked_tokens(expires_at);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hist_bars_date ON historical_market_bars(trading_date);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hist_bars_sym ON historical_market_bars(symbol);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hist_bars_source ON historical_market_bars(delivery_source);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_rec_cohort ON paper_recommendations(cohort_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_rec_status ON paper_recommendations(status);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_rec_date ON paper_recommendations(signal_date);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_events_rec ON paper_execution_events(recommendation_id);")
+
 
     # Seed NSE Equities if empty
     cursor.execute("SELECT COUNT(*) FROM nse_equities")
@@ -286,18 +472,16 @@ def init_db() -> None:
     safe_add_column("daily_reports", "delivery_status TEXT DEFAULT 'PENDING'")
     safe_add_column("daily_reports", "recipient_email TEXT")
 
-    # Seed default local user for seamless backward compatibility
-    cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'default_trader'")
-    if cursor.fetchone()[0] == 0:
-        import hashlib
-        default_pwd_hash = hashlib.sha256("trader123".encode()).hexdigest()
-        cursor.execute("""
-        INSERT INTO users (id, username, email, password_hash, api_key, created_at)
-        VALUES ('usr_default_trader', 'default_trader', 'trader@predictastock.internal', ?, 'pstk_live_key_default', ?)
-        """, (default_pwd_hash, datetime.now().isoformat()))
-
     conn.commit()
     conn.close()
+
+    # Ensure default trader account exists with modern bcrypt hash
+    try:
+        from app.auth import ensure_default_trader_account
+        ensure_default_trader_account()
+    except Exception as e:
+        logger.warning(f"Could not initialize default trader account: {e}")
+
 
 
 def backup_database() -> Path:

@@ -40,7 +40,12 @@ def test_phase1_two_sided_volatility_cones():
 
 
 def test_phase1_portfolio_strict_rejection():
-    """Verify that selling more shares than held or negative prices are strictly rejected with HTTP 400."""
+    """Verify that selling more shares than held or negative prices are strictly rejected with HTTP 400 for authenticated user."""
+    import uuid
+    u_name = f"phase1_trader_{uuid.uuid4().hex[:6]}"
+    reg = register_user(u_name, "Pass123456!", f"{u_name}@test.com")
+    auth_header = {"Authorization": f"Bearer {reg['access_token']}"}
+
     # Attempt negative price
     res_neg = client.post("/api/portfolio/transaction", json={
         "symbol": "TCS",
@@ -48,7 +53,7 @@ def test_phase1_portfolio_strict_rejection():
         "price": -100.0,
         "quantity": 10,
         "transaction_date": "2026-10-10"
-    })
+    }, headers=auth_header)
     assert res_neg.status_code == 400
 
     # Attempt oversell
@@ -58,7 +63,7 @@ def test_phase1_portfolio_strict_rejection():
         "price": 500.0,
         "quantity": 9999,
         "transaction_date": "2026-10-10"
-    })
+    }, headers=auth_header)
     assert res_oversell.status_code == 400
 
 

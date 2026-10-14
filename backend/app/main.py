@@ -6,10 +6,12 @@ Phase 1 Integrity Updates:
 - Strict HTTP 400 validation responses on portfolio errors (rejects overselling and non-positive values).
 - Grounded chart volatility cones with directional alignment.
 """
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Depends, Security, status
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+
 from pathlib import Path
 from datetime import datetime, date
 from typing import Dict, Any, List, Optional
@@ -23,8 +25,14 @@ from app.models import (
     TransactionCreate, UserRegisterRequest, UserLoginRequest,
     CorporateActionCreate, EmailDispatchRequest
 )
-from app.auth import register_user, authenticate_user, get_current_user_from_key
-from app.services.market_data import get_nifty50_live_status, get_latest_quote, is_quote_valid
+from app.auth import (
+    register_user, authenticate_user, get_current_user_from_key,
+    HTTP_BEARER
+)
+from app.services.market_data import (
+    get_nifty50_live_status, get_latest_quote, is_quote_valid,
+    get_market_data_coverage, backfill_historical_bhavcopy_dataset
+)
 from app.services.prediction_engine import (
     generate_daily_recommendations, get_latest_recommendations,
     reset_daily_recommendations, get_scan_progress
@@ -61,23 +69,17 @@ def startup_event():
     except Exception as e:
         logger.error(f"Failed to start scheduler on startup: {e}")
 
-# Secure CORS configuration
-ALLOWED_ORIGINS = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173"
-]
+# Production-Hardened CORS Configuration
+from app.config import ALLOWED_ORIGINS, ENVIRONMENT, DEBUG
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Permissive for local dev terminal, verified by local hosts
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
 
 # Mount static frontend and report directories
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -178,11 +180,55 @@ def register_account(req: UserRegisterRequest) -> Dict[str, Any]:
 
 @app.post("/api/auth/login")
 def login_account(req: UserLoginRequest) -> Dict[str, Any]:
-    """Authenticate credentials and return API session token."""
+    """Authenticate credentials and return API session token and JWT tokens."""
     user = authenticate_user(req.username, req.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     return {"status": "SUCCESS", "user": user}
+
+
+@app.post("/api/auth/refresh")
+def refresh_session_token(token: str = Query(..., description="JWT refresh token")) -> Dict[str, Any]:
+    """Exchange a valid refresh token for a new access token."""
+    import jwt
+    from app.config import JWT_SECRET_KEY, JWT_ALGORITHM
+    from app.auth import is_token_revoked, create_access_token
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        if payload.get("token_type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid token type for refresh.")
+        if is_token_revoked(payload.get("jti")):
+            raise HTTPException(status_code=401, detail="Refresh token has been revoked.")
+        user_id = payload.get("sub")
+        username = payload.get("username")
+        new_access = create_access_token(user_id, username)
+        return {"status": "SUCCESS", "access_token": new_access}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Refresh token expired. Please re-login.")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid refresh token: {str(e)}")
+
+
+@app.post("/api/auth/logout")
+def logout_session(
+    bearer: Optional[HTTPAuthorizationCredentials] = Security(HTTP_BEARER),
+    current_user: Dict[str, Any] = Depends(get_current_user_from_key)
+) -> Dict[str, Any]:
+    """Revoke active JWT access token to invalidate session."""
+    import jwt
+    from app.config import JWT_SECRET_KEY, JWT_ALGORITHM
+    from app.auth import revoke_token
+    from datetime import timezone
+    if bearer and bearer.credentials:
+        try:
+            payload = jwt.decode(bearer.credentials, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            jti = payload.get("jti")
+            exp = datetime.fromtimestamp(payload.get("exp"), tz=timezone.utc)
+            if jti:
+                revoke_token(jti, current_user["id"], exp)
+        except Exception:
+            pass
+    return {"status": "SUCCESS", "message": "Session token successfully invalidated."}
 
 
 @app.get("/api/auth/me")
@@ -194,7 +240,7 @@ def get_current_user_profile(current_user: Dict[str, Any] = Depends(get_current_
 @app.get("/api/portfolio")
 def get_portfolio(current_user: Dict[str, Any] = Depends(get_current_user_from_key)) -> Dict[str, Any]:
     """Retrieve user portfolio computed with First-In-First-Out (FIFO) and Indian taxes."""
-    user_id = current_user.get("id", "usr_default_trader")
+    user_id = current_user["id"]
     return compute_portfolio_fifo(user_id=user_id)
 
 
@@ -205,7 +251,7 @@ def add_portfolio_transaction(
 ) -> Dict[str, Any]:
     """Record a user investment (buy or sell) in the immutable transaction ledger."""
     try:
-        user_id = current_user.get("id", "usr_default_trader")
+        user_id = current_user["id"]
         res = record_transaction(
             symbol=data.symbol,
             transaction_type=data.transaction_type,
@@ -235,7 +281,7 @@ def delete_portfolio_stock(
     Deletes all transactions recorded for a specific stock symbol for the authenticated user,
     completely removing the stock from the user's active portfolio holdings.
     """
-    user_id = current_user.get("id", "usr_default_trader")
+    user_id = current_user["id"]
     return delete_stock_from_portfolio(symbol=symbol, user_id=user_id)
 
 
@@ -245,8 +291,9 @@ def delete_portfolio_transaction_endpoint(
     current_user: Dict[str, Any] = Depends(get_current_user_from_key)
 ) -> Dict[str, Any]:
     """Deletes a specific individual transaction by its unique ID for the authenticated user."""
-    user_id = current_user.get("id", "usr_default_trader")
+    user_id = current_user["id"]
     return delete_transaction(transaction_id=transaction_id, user_id=user_id)
+
 
 
 
@@ -537,6 +584,66 @@ def run_backtest_endpoint(
     except Exception as e:
         logger.error(f"Backtest execution error: {e}")
         raise HTTPException(status_code=500, detail=f"Backtest execution failed: {str(e)}")
+
+
+# ---------------------------------------------------------
+# HISTORICAL MARKET DATASET & PROSPECTIVE PAPER TRADING
+# ---------------------------------------------------------
+@app.get("/api/market-data/coverage")
+def get_market_data_coverage_endpoint() -> Dict[str, Any]:
+    """Retrieve Point-in-Time Historical Market Data coverage, verified Bhavcopy status, and session counts."""
+    try:
+        return get_market_data_coverage()
+    except Exception as e:
+        logger.error(f"Market data coverage error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/market-data/backfill")
+def backfill_bhavcopy_endpoint(
+    trading_days: int = Query(90, ge=10, le=250)
+) -> Dict[str, Any]:
+    """Trigger backfill of official NSE Bhavcopies and OHLCV bars into historical_market_bars."""
+    try:
+        summary = backfill_historical_bhavcopy_dataset(trading_days=trading_days)
+        return {"status": "SUCCESS", "summary": summary}
+    except Exception as e:
+        logger.error(f"Bhavcopy backfill error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/paper-trading/status")
+def get_paper_trading_status_endpoint(cohort_id: Optional[str] = None) -> Dict[str, Any]:
+    """Retrieve forward paper-trading cohort metrics, cash balance, and compounded portfolio equity."""
+    try:
+        from app.services.paper_trader import get_paper_trading_summary
+        return get_paper_trading_summary(cohort_id=cohort_id or "COHORT-2026-v2.3")
+    except Exception as e:
+        logger.error(f"Paper trading status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/paper-trading/scorecard")
+def get_paper_trading_scorecard_endpoint(cohort_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieve line-item audit scorecard for prospective paper recommendations."""
+    try:
+        from app.services.paper_trader import get_paper_trading_scorecard
+        return get_paper_trading_scorecard(cohort_id=cohort_id or "COHORT-2026-v2.3")
+    except Exception as e:
+        logger.error(f"Paper trading scorecard error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/paper-trading/cycle")
+def run_paper_trading_cycle_endpoint(cohort_id: Optional[str] = None) -> Dict[str, Any]:
+    """Execute forward paper-trading cycle (fill T+1 opens with gap/circuit filters, evaluate path-dependent exits)."""
+    try:
+        from app.services.paper_trader import process_paper_trading_cycle
+        return process_paper_trading_cycle(cohort_id=cohort_id or "COHORT-2026-v2.3")
+    except Exception as e:
+        logger.error(f"Paper trading cycle error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # ---------------------------------------------------------
