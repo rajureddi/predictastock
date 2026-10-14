@@ -103,3 +103,13 @@ def test_broker_connectors_completely_removed():
     """Verify broker_connectors module is completely removed and cannot be imported."""
     with pytest.raises(ModuleNotFoundError):
         import app.services.broker_connectors  # noqa: F401
+
+
+def test_no_unique_calls_per_stock():
+    """Verify that get_stock_enrichment does not consume live API calls for arbitrary stocks."""
+    calls_before = get_calls_used_today()
+    enrichment = get_stock_enrichment("UNKNOWN_TICKER_999")
+    calls_after = get_calls_used_today()
+    assert calls_after == calls_before, "get_stock_enrichment must not consume live calls on arbitrary stocks"
+    assert enrichment["mode"] == "MACRO_ONLY_CONSERVATION"
+

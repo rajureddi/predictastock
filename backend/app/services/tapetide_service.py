@@ -286,20 +286,58 @@ def get_promoter_pledge_status(symbol: str) -> Dict[str, Any]:
 
 def get_stock_enrichment(symbol: str) -> Dict[str, Any]:
     """
-    Combines Options Analytics, Promoter Pledge, and Macro FII/DII flow into a unified
-    high-conviction quantitative profile. Consumes max 2 tool calls per unique stock per 24 hours.
+    Returns macro FII/DII flow (1 call/day shared across all stocks) and checks if
+    cached options/governance exists. Does NOT make unneeded per-stock live calls,
+    relying on PredictaStock's built-in quantitative engines for individual stocks
+    and preserving the 50 calls/day budget.
     """
     clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
     fii_dii = get_fii_dii_summary()
-    opt = get_options_analytics(clean_sym)
-    gov = get_promoter_pledge_status(clean_sym)
+
+    # Check cache only for per-stock tools to prevent consuming calls per stock
+    opt_cached = _get_cached_response(f"get_options_analytics:{json.dumps({'symbol': clean_sym}, sort_keys=True)}")
+    pledge_cached = _get_cached_response(f"get_promoter_pledge:{json.dumps({'symbol': clean_sym}, sort_keys=True)}")
+
+    opt_data = {"available": False, "iv_rank": None, "iv_percentile": None, "source": "BUILTIN_LOCAL_ATR"}
+    if opt_cached and opt_cached.get("available"):
+        data = opt_cached.get("data", {}).get("data", {})
+        iv_rank = data.get("iv_rank")
+        iv_percentile = data.get("iv_percentile")
+        opt_data = {
+            "available": True,
+            "symbol": clean_sym,
+            "as_of": data.get("as_of"),
+            "iv_rank": round(float(iv_rank) * 100, 1) if iv_rank is not None else None,
+            "iv_percentile": round(float(iv_percentile) * 100, 1) if iv_percentile is not None else None,
+            "cached": True,
+            "source": "TAPETIDE_CACHED"
+        }
+
+    gov_data = {"available": False, "pledged_pct": 0.0, "is_high_risk": False, "governance_flag": "Local Solvency Check", "source": "BUILTIN_LOCAL_STATEMENTS"}
+    if pledge_cached and pledge_cached.get("available"):
+        data = pledge_cached.get("data", {}).get("data", {})
+        raw_pledged = data.get("latest_pledged_pct_of_promoter_holding", "0")
+        try:
+            pledged_pct = float(raw_pledged)
+        except (ValueError, TypeError):
+            pledged_pct = 0.0
+        gov_data = {
+            "available": True,
+            "symbol": clean_sym,
+            "pledged_pct": pledged_pct,
+            "is_high_risk": pledged_pct > 15.0,
+            "governance_flag": "High Promoter Pledge (>15%)" if pledged_pct > 15.0 else "Healthy Promoter Pledge",
+            "cached": True,
+            "source": "TAPETIDE_CACHED"
+        }
 
     return {
         "symbol": clean_sym,
-        "has_tapetide": opt.get("available") or gov.get("available") or fii_dii.get("available"),
-        "options": opt,
-        "governance": gov,
-        "macro_fii_dii": fii_dii
+        "has_tapetide": fii_dii.get("available", False) or opt_data.get("available", False),
+        "options": opt_data,
+        "governance": gov_data,
+        "macro_fii_dii": fii_dii,
+        "mode": "MACRO_ONLY_CONSERVATION"
     }
 
 

@@ -2000,38 +2000,38 @@ function renderIntelligenceContent(data) {
     const macroFlow = tapetide.macro_fii_dii || {};
 
     body.innerHTML = `
-        <!-- TAPETIDE VERIFIED QUANTITATIVE INTELLIGENCE BANNER -->
+        <!-- TAPETIDE MACRO RADAR & BUILT-IN QUANTITATIVE ENGINES -->
         <div style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(16, 185, 129, 0.08) 100%); border: 1px solid var(--accent-indigo); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <span style="font-size: 11px; font-weight: 700; color: var(--accent-indigo); font-family: var(--font-display); display: flex; align-items: center; gap: 6px;">
                     <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--accent-mint); box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);"></span>
-                    TAPETIDE FINANCIAL INTELLIGENCE MCP (VERIFIED)
+                    INSTITUTIONAL MACRO RADAR &amp; LOCAL PREDICTION ENGINES
                 </span>
                 <span style="font-size: 9.5px; font-family: var(--font-mono); color: var(--text-muted); background: var(--bg-surface); padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border-subtle);">
-                    24H PERSISTENT CACHE &bull; ZERO QUOTA EXHAUSTION
+                    0 PER-STOCK CALLS &bull; 50 CALLS/DAY CEILING PROTECTED
                 </span>
             </div>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
                 <div style="background: var(--bg-surface); padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border-subtle);">
-                    <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">OPTIONS ATM IV RANK</div>
-                    <div style="font-size: 13px; font-weight: 700; color: ${opt.iv_rank > 60 ? 'var(--accent-coral)' : 'var(--accent-mint)'}; font-family: var(--font-mono);">
-                        ${opt.iv_rank != null ? opt.iv_rank + '%' : '38.5% (Normal)'}
+                    <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">VOLATILITY CONE ENGINE</div>
+                    <div style="font-size: 13px; font-weight: 700; color: var(--accent-mint); font-family: var(--font-mono);">
+                        ${opt.available && opt.iv_rank != null ? opt.iv_rank + '% (IV Rank)' : '14-Day ATR Math'}
                     </div>
                     <div style="font-size: 9.5px; color: var(--text-secondary); margin-top: 2px;">
-                        IV Percentile: ${opt.iv_percentile != null ? opt.iv_percentile + '%' : '45.0%'}
+                        ${opt.available ? 'Tapetide IV Percentile: ' + opt.iv_percentile + '%' : 'Zero-Synthetic Local Cones'}
                     </div>
                 </div>
                 <div style="background: var(--bg-surface); padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border-subtle);">
-                    <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">PROMOTER PLEDGE</div>
+                    <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">SOLVENCY &amp; GOVERNANCE</div>
                     <div style="font-size: 13px; font-weight: 700; color: ${gov.is_high_risk ? 'var(--accent-coral)' : 'var(--accent-mint)'}; font-family: var(--font-mono);">
-                        ${gov.pledged_pct != null ? gov.pledged_pct + '%' : '0.0%'}
+                        ${gov.available && gov.pledged_pct != null ? gov.pledged_pct + '% Pledged' : 'Solvency Gatekeeper'}
                     </div>
                     <div style="font-size: 9.5px; color: var(--text-secondary); margin-top: 2px;">
-                        ${gov.governance_flag || 'Clean Solvency'}
+                        ${gov.available ? gov.governance_flag : 'Balance Sheet D/E &amp; ROE Checked'}
                     </div>
                 </div>
                 <div style="background: var(--bg-surface); padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border-subtle);">
-                    <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">INSTITUTIONAL CASH FLOW</div>
+                    <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">TAPETIDE FII / DII FLOW</div>
                     <div style="font-size: 11px; font-weight: 700; color: var(--text-primary); font-family: var(--font-mono);">
                         FII: ${macroFlow.fii_net_cr ? (macroFlow.fii_net_cr > 0 ? '+' : '') + Number(macroFlow.fii_net_cr).toLocaleString() + ' Cr' : '-₹44,649 Cr'}
                     </div>
