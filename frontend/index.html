@@ -647,14 +647,6 @@
                                 <div class="panel-subtitle">Strict lot conservation &bull; Statutory Indian taxes and charges deducted</div>
                             </div>
                             <div style="display: flex; gap: 8px;">
-                                <button class="btn btn-secondary" onclick="openIntegrationsModal('sync')" title="Sync portfolio holdings directly from Upstox Demat">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="23 4 23 10 17 10"></polyline>
-                                        <polyline points="1 20 1 14 7 14"></polyline>
-                                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                                    </svg>
-                                    Sync Upstox Demat
-                                </button>
                                 <button class="btn btn-secondary" onclick="openCorporateActionsModal()">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
@@ -1187,109 +1179,72 @@
                             <line x1="6" y1="6" x2="6.01" y2="6"></line>
                             <line x1="6" y1="18" x2="6.01" y2="18"></line>
                         </svg>
-                        Institutional Integrations &amp; Broker Gateways
+                        Tapetide Financial Intelligence MCP Gateway
                     </span>
                     <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px;">
-                        Tapetide Financial Intelligence MCP &bull; Upstox Open API v2 Demat Gateway
+                        55-Tool Live Quantitative Intelligence Gateway &bull; Options Volatility &bull; Promoter Governance &bull; FII/DII Flows
                     </div>
                 </div>
                 <button class="modal-close-btn" onclick="closeIntegrationsModal()">&times;</button>
             </div>
             <div class="modal-body" style="padding: 20px;">
-                <!-- 1. TAPETIDE MCP SECTION -->
-                <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 16px; margin-bottom: 18px;">
+                <!-- TAPETIDE MCP CONSOLE -->
+                <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 18px; margin-bottom: 18px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-mint); box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);"></span>
-                            <span style="font-weight: 700; font-size: 13px; color: var(--text-primary); font-family: var(--font-display);">Tapetide Financial Intelligence MCP Gateway</span>
+                            <span style="font-weight: 700; font-size: 13.5px; color: var(--text-primary); font-family: var(--font-display);">Tapetide Financial Intelligence MCP Gateway</span>
                         </div>
                         <span id="modalTapetideStatusBadge" class="stance-pill bull">OPERATIONAL (55 TOOLS)</span>
                     </div>
 
-                    <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px;">
+                    <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px;">
                         Live JSON-RPC stream connection to Tapetide institutional servers (<code style="font-family: var(--font-mono); color: var(--accent-indigo);">mcp.tapetide.com</code>). Powers options chain ATM IV rank/percentile, promoter encumbrance audits, and macro FII/DII net flows.
                     </div>
 
                     <!-- Quota Meter Card -->
-                    <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 14px;">
-                        <div style="display: flex; justify-content: space-between; font-size: 11.5px; margin-bottom: 6px;">
-                            <span style="color: var(--text-muted); font-family: var(--font-mono);">DAILY FREE QUOTA ALLOCATION:</span>
+                    <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 14px 16px; margin-bottom: 16px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 11.5px; margin-bottom: 8px;">
+                            <span style="color: var(--text-muted); font-family: var(--font-mono); letter-spacing: 0.04em;">DAILY FREE QUOTA ALLOCATION:</span>
                             <strong id="modalTapetideQuotaText" style="font-family: var(--font-mono); color: var(--accent-mint);">0 / 50 Calls Used (50 Free Remaining)</strong>
                         </div>
                         <div style="height: 6px; background: var(--border-subtle); border-radius: 3px; overflow: hidden; margin-bottom: 8px;">
-                            <div id="modalTapetideQuotaBar" style="height: 100%; width: 6%; background: var(--accent-mint); transition: width 0.3s ease;"></div>
+                            <div id="modalTapetideQuotaBar" style="height: 100%; width: 10%; background: var(--accent-mint); transition: width 0.3s ease;"></div>
                         </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">
+                        <div style="display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono);">
                             <span>Safe Quota Limit: 45 Calls/Day (5 Safety Buffer)</span>
-                            <span id="modalTapetideCacheText">3 Cached Scrips (24h TTL, 0 API Calls)</span>
+                            <span id="modalTapetideCacheText">5 Cached Scrips (24h TTL, 0 API Calls)</span>
+                        </div>
+                    </div>
+
+                    <!-- Active Sub-Engines -->
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px;">
+                        <div style="background: var(--bg-base); padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">OPTIONS &amp; IV DESK</div>
+                            <div style="font-size: 11.5px; font-weight: 600; color: var(--text-primary); margin-top: 3px;">ATM IV Rank &amp; Percentile</div>
+                            <div style="font-size: 10px; color: var(--text-secondary); margin-top: 2px;">Calculated live from NSE options chains.</div>
+                        </div>
+                        <div style="background: var(--bg-base); padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">GOVERNANCE DESK</div>
+                            <div style="font-size: 11.5px; font-weight: 600; color: var(--text-primary); margin-top: 3px;">Promoter Share Pledging</div>
+                            <div style="font-size: 10px; color: var(--text-secondary); margin-top: 2px;">Automated solvency risk veto rule (>15%).</div>
+                        </div>
+                        <div style="background: var(--bg-base); padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">MACRO FLOW DESK</div>
+                            <div style="font-size: 11.5px; font-weight: 600; color: var(--text-primary); margin-top: 3px;">FII / DII Exchange Cash</div>
+                            <div style="font-size: 10px; color: var(--text-secondary); margin-top: 2px;">Net institutional cash absorption figures.</div>
                         </div>
                     </div>
 
                     <!-- Update Tapetide Token Form -->
                     <div style="display: flex; gap: 8px; align-items: center;">
                         <input id="inputTapetideToken" type="password" class="form-control" placeholder="Tapetide Bearer Token (tpt_rt_...)" style="font-family: var(--font-mono); font-size: 11px; flex: 1;">
-                        <button class="btn btn-secondary btn-sm" onclick="saveTapetideToken()">Update Key</button>
+                        <button class="btn btn-primary btn-sm" onclick="saveTapetideToken()">Update Key</button>
                     </div>
                 </div>
-
-                <!-- 2. UPSTOX DEMAT GATEWAY SECTION -->
-                <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 16px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-mint); box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);"></span>
-                            <span style="font-size: 13px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display);">
-                                Upstox API v2 &bull; Direct Demat Holdings &amp; Execution
-                            </span>
-                        </div>
-                        <span id="modalUpstoxStatusBadge" class="stance-pill bull">CONFIGURED (LIVE)</span>
-                    </div>
-
-                    <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px;">
-                        Direct connection to Upstox Open API (<code style="font-family: var(--font-mono); color: var(--accent-indigo);">api.upstox.com/v2</code>). Synchronizes your long-term equity delivery holdings, stock quantities, and acquisition prices into PredictaStock's FIFO accounting ledger.
-                    </div>
-
-                    <!-- User Account & Token Diagnostics Strip -->
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px;">
-                        <div style="background: var(--bg-base); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">UPSTOX CLIENT ID</div>
-                            <div style="font-size: 12.5px; font-weight: 700; color: var(--accent-mint); font-family: var(--font-mono); margin-top: 2px;">4UBAFX</div>
-                        </div>
-                        <div style="background: var(--bg-base); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">GATEWAY SERVICE</div>
-                            <div style="font-size: 12px; font-weight: 600; color: var(--text-primary); font-family: var(--font-mono); margin-top: 2px;">udapi-gateway</div>
-                        </div>
-                        <div style="background: var(--bg-base); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">CURRENT PUBLIC IP</div>
-                            <div style="font-size: 12px; font-weight: 600; color: var(--accent-indigo); font-family: var(--font-mono); margin-top: 2px;">106.76.167.76</div>
-                        </div>
-                    </div>
-
-                    <!-- IP Whitelist Diagnostic Alert -->
-                    <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 14px; font-size: 11px; line-height: 1.45; color: var(--text-secondary);">
-                        <strong style="color: var(--accent-mint);">Security Notice (UDAPI1221):</strong> If your Upstox Developer App has static IP whitelist protection enabled, ensure IP <code style="font-family: var(--font-mono); color: var(--accent-indigo);">106.76.167.76</code> is added in your Upstox Developer App console, or remove the static IP constraint to permit direct API calls.
-                    </div>
-
-                    <!-- Sync Actions Row -->
-                    <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 14px;">
-                        <button class="btn btn-primary" style="flex: 2; height: 36px;" onclick="triggerBrokerSync('upstox')">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="23 4 23 10 17 10"></polyline>
-                                <polyline points="1 20 1 14 7 14"></polyline>
-                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                            </svg>
-                            Sync Upstox Demat Holdings to FIFO Ledger
-                        </button>
-                    </div>
-
-                    <!-- Token Update Field -->
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <input id="inputUpstoxToken" type="password" class="form-control" placeholder="Update Upstox Access Token (eyJhbGci...)" style="font-size: 11px; font-family: var(--font-mono); flex: 1;">
-                        <button class="btn btn-secondary btn-sm" onclick="saveUpstoxCredentials()">Update Token</button>
-                    </div>
-                </div>
-
-                <div id="brokerSyncNotification" style="display: none; margin-top: 14px; padding: 10px 14px; border-radius: var(--radius-sm); font-size: 11.5px;"></div>
             </div>
+        </div>
+    </div>
         </div>
     </div>
 

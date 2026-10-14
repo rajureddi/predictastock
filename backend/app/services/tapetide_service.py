@@ -325,3 +325,58 @@ def get_quota_status() -> Dict[str, Any]:
         "cached_items_count": cached_count,
         "status": "OPERATIONAL" if used < safe_cap else "QUOTA_PROTECTED"
     }
+
+
+def get_integrations_status() -> Dict[str, Any]:
+    """Returns standardized health and quota status for the integrations subsystem."""
+    quota = get_quota_status()
+    return {
+        "tapetide": {
+            "connected": quota["active"],
+            "status": quota["status"],
+            "calls_used_today": quota["calls_used_today"],
+            "daily_limit": quota["daily_limit"],
+            "calls_remaining": quota["calls_remaining"],
+            "cached_entries": quota["cached_items_count"],
+            "description": "55-Tool Indian Equities MCP Gateway (FII/DII, Options IV, Promoter Pledges)"
+        }
+    }
+
+
+def update_tapetide_token(token: str) -> Dict[str, Any]:
+    """Updates the runtime and persistent .env token for Tapetide MCP Gateway."""
+    global TAPETIDE_TOKEN
+    clean_token = token.strip()
+    TAPETIDE_TOKEN = clean_token
+    os.environ["TAPETIDE_TOKEN"] = clean_token
+
+    from pathlib import Path
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    lines = []
+    if env_path.exists():
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+    found = False
+    new_lines = []
+    for line in lines:
+        if line.strip().startswith("TAPETIDE_TOKEN="):
+            new_lines.append(f"TAPETIDE_TOKEN={clean_token}\n")
+            found = True
+        else:
+            new_lines.append(line)
+    if not found:
+        new_lines.append(f"TAPETIDE_TOKEN={clean_token}\n")
+
+    try:
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+    except Exception as e:
+        logger.warning(f"Could not persist TAPETIDE_TOKEN to .env: {e}")
+
+    return {
+        "status": "UPDATED",
+        "service": "tapetide",
+        "active": bool(clean_token)
+    }
+

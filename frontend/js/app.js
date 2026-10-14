@@ -2638,12 +2638,6 @@ async function fetchIntegrationsStatus() {
             }
         }
 
-        // Upstox status
-        const upstoxBadge = document.getElementById("modalUpstoxStatusBadge");
-        if (upstoxBadge && data.upstox) {
-            upstoxBadge.textContent = data.upstox.connected ? "CONFIGURED (LIVE)" : "DISCONNECTED";
-            upstoxBadge.className = `stance-pill ${data.upstox.connected ? 'bull' : 'neutral'}`;
-        }
     } catch (e) {
         console.warn("Integrations status fetch failed:", e);
     }
@@ -2687,84 +2681,10 @@ async function saveTapetideToken() {
     }
 }
 
-async function saveUpstoxCredentials() {
-    const token = document.getElementById("inputUpstoxToken")?.value.trim();
-    if (!token) {
-        showToast("Enter Upstox Access Token", "warning");
-        return;
-    }
-    try {
-        const res = await authFetch(`${API_BASE}/api/integrations/credentials`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ service: "upstox", credentials: { access_token: token } })
-        });
-        if (res.ok) {
-            showToast("Upstox access token saved & active", "success");
-            fetchIntegrationsStatus();
-        } else {
-            showToast("Failed to update Upstox credentials", "error");
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, "error");
-    }
-}
-
-async function triggerBrokerSync(broker = "upstox") {
-    const notifyEl = document.getElementById("brokerSyncNotification");
-    if (notifyEl) {
-        notifyEl.style.display = "block";
-        notifyEl.style.background = "var(--bg-base)";
-        notifyEl.style.color = "var(--text-secondary)";
-        notifyEl.style.border = "1px solid var(--border-subtle)";
-        notifyEl.textContent = `Connecting to Upstox API v2 and retrieving demat holdings...`;
-    }
-    try {
-        const res = await authFetch(`${API_BASE}/api/integrations/broker/sync?broker=${encodeURIComponent(broker)}`, {
-            method: "POST"
-        });
-        const data = await res.json();
-        if (data.status === "SUCCESS") {
-            if (notifyEl) {
-                notifyEl.style.background = "var(--accent-mint-bg)";
-                notifyEl.style.color = "var(--accent-mint)";
-                notifyEl.style.border = "1px solid var(--accent-mint-border)";
-                notifyEl.textContent = `Sync Complete: Reconciled ${data.count} position(s) from Upstox Demat into FIFO ledger.`;
-            }
-            showToast(`Synchronized ${data.count} holding(s) from Upstox`, "success");
-            loadPortfolio();
-        } else if (data.status === "IP_WHITELIST_REQUIRED") {
-            if (notifyEl) {
-                notifyEl.style.background = "var(--accent-coral-bg)";
-                notifyEl.style.color = "var(--accent-coral)";
-                notifyEl.style.border = "1px solid var(--accent-coral-border)";
-                notifyEl.innerHTML = `<strong>Upstox IP Whitelist Alert (UDAPI1221):</strong> Your Upstox App has static IP protection enabled. Whitelist public IP <strong>${data.public_ip || '106.76.167.76'}</strong> in your Upstox Developer App console or clear the static IP field.`;
-            }
-            showToast(`Upstox: Add IP ${data.public_ip || '106.76.167.76'} in Upstox developer console`, "warning");
-        } else {
-            if (notifyEl) {
-                notifyEl.style.background = "var(--accent-coral-bg)";
-                notifyEl.style.color = "var(--accent-coral)";
-                notifyEl.style.border = "1px solid var(--accent-coral-border)";
-                notifyEl.textContent = `Upstox Sync Notice: ${data.message || 'Credentials required. Enter API keys above.'}`;
-            }
-            showToast(`Sync Notice: ${data.message || 'Credentials needed'}`, "warning");
-        }
-    } catch (e) {
-        if (notifyEl) {
-            notifyEl.style.background = "var(--accent-coral-bg)";
-            notifyEl.style.color = "var(--accent-coral)";
-            notifyEl.textContent = `Connection error: ${e.message}`;
-        }
-        showToast(`Connection error: ${e.message}`, "error");
-    }
-}
-
 window.openIntegrationsModal = openIntegrationsModal;
 window.closeIntegrationsModal = closeIntegrationsModal;
 window.saveTapetideToken = saveTapetideToken;
-window.saveUpstoxCredentials = saveUpstoxCredentials;
-window.triggerBrokerSync = triggerBrokerSync;
+
 
 
 
