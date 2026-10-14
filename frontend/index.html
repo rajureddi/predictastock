@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PredictaStock — Quantitative Terminal & Institutional AI Analytics</title>
+    <meta name="description" content="Institutional quantitative trading intelligence and FIFO portfolio engine for Indian equities (NSE/BSE). Grounded 5-day volatility forecasts with verifiable alpha.">
+    <link rel="stylesheet" href="/static/css/terminal.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
+    <!-- Chart.js Engine -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <!-- App Shell Layout -->
+    <div class="app-layout">
+        <!-- 1. COLLAPSIBLE LEFT NAVIGATION SIDEBAR -->
+        <aside class="app-sidebar" id="appSidebar">
+            <div class="sidebar-header">
+                <a href="#" class="brand-wrapper" onclick="switchTab('charts'); return false;">
+                    <div class="brand-logo-icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
+                            <polyline points="16 7 22 7 22 13"></polyline>
+                        </svg>
+                    </div>
+                    <div class="brand-info">
+                        <div class="brand-name">
+                            <span>PredictaStock</span>
+                            <span class="brand-tag">v2.1</span>
+                        </div>
+                        <span class="brand-sub">QUANT TERMINAL</span>
+                    </div>
+                </a>
+                <button class="sidebar-collapse-btn" id="sidebarToggleBtn" onclick="toggleSidebarCollapse()" title="Collapse / Expand Sidebar">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Navigation Links -->
+            <nav class="sidebar-nav">
+                <div class="nav-section-label">MARKET TERMINAL</div>
+                
+                <div class="nav-item active" onclick="switchTab('charts')" id="nav-btn-charts">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M3 3v18h18"></path>
+                        <path d="M18 9l-5 5-4-4-6 6"></path>
+                    </svg>
+                    <span class="nav-label">Command Center</span>
+                    <span class="nav-badge">LIVE</span>
+                </div>
+
+                <div class="nav-item" onclick="switchTab('recs')" id="nav-btn-recs">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+                        <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+                        <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+                        <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+                    </svg>
+                    <span class="nav-label">5D Predictions</span>
+                    <span class="nav-badge" id="sidebarRecCount">5</span>
+                </div>
+
+                <div class="nav-section-label">PORTFOLIO &amp; RISK</div>
+
+                <div class="nav-item" onclick="switchTab('portfolio')" id="nav-btn-portfolio">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <rect x="2" y="7" width="20" height="14" rx="2"></rect>
+                        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                    </svg>
+                    <span class="nav-label">Portfolio &amp; FIFO</span>
+                </div>
+
+                <div class="nav-item" onclick="switchTab('risk')" id="nav-btn-risk">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                    </svg>
+                    <span class="nav-label">Sector Concentration</span>
+                </div>
+
+                <div class="nav-section-label">RESEARCH &amp; AUDIT</div>
+
+                <div class="nav-item" onclick="switchTab('scorecard')" id="nav-btn-scorecard">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <circle cx="12" cy="12" r="6"></circle>
+                        <circle cx="12" cy="12" r="2"></circle>
+                    </svg>
+                    <span class="nav-label">Forecast Scorecard</span>
+                </div>
+
+                <div class="nav-item" onclick="switchTab('reports')" id="nav-btn-reports">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                    </svg>
+                    <span class="nav-label">Morning Report</span>
+                </div>
+            </nav>
+
+            <!-- Copilot Action Box -->
+            <div class="sidebar-copilot-box">
+                <div style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); text-transform: uppercase; margin-bottom: 4px;">AI Multi-Agent Team</div>
+                <button class="btn btn-secondary btn-sm" style="width: 100%; justify-content: center; font-size: 11px;" onclick="openDebateModalFromChart()">
+                    ⚔️ 7 ANALYSTS DEBATE
+                </button>
+            </div>
+
+            <!-- Theme Toggle Control -->
+            <div class="sidebar-theme-switch-row" onclick="toggleThemeManual()" title="Toggle Light / Dark Mode">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span id="sidebarThemeIcon" style="font-size: 13px;">☀️</span>
+                    <span id="sidebarThemeLabel" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">Dark Mode</span>
+                </div>
+                <span class="theme-toggle-pill" id="sidebarThemePill">DARK</span>
+            </div>
+
+            <!-- Sidebar Footer -->
+            <div class="sidebar-footer">
+                <div class="market-pulse-box">
+                    <span class="pulse-dot" id="marketPulseDot"></span>
+                    <span class="market-status-text" id="marketStatusText">NSE REALTIME</span>
+                </div>
+                <span id="marketSessionStatus" style="font-family: var(--font-mono); color: var(--emerald-bull); font-weight: 700;">OPEN</span>
+            </div>
+        </aside>
+
+        <!-- 2. MAIN APPLICATION WORKSPACE -->
+        <div class="app-main">
+            <!-- TOPBAR -->
+            <header class="app-topbar">
+                <div class="topbar-left">
+                    <h1 class="view-heading" id="currentViewTitle">COMMAND CENTER</h1>
+                    
+                    <!-- Market Indices Ticker Strip -->
+                    <div class="indices-ticker-strip">
+                        <div class="index-pill" id="pillNifty">
+                            <span class="index-name">NIFTY 50</span>
+                            <span class="index-price tabular-nums" id="niftyPrice">--</span>
+                            <span class="index-change tabular-nums" id="niftyChange">--</span>
+                        </div>
+                        <div class="index-pill" id="pillVix">
+                            <span class="index-name">INDIA VIX</span>
+                            <span class="index-price tabular-nums" id="vixVal">--</span>
+                            <span class="index-change tabular-nums" id="vixChange">--</span>
+                        </div>
+                        <div class="index-pill session-cutoff-pill" style="border-color: rgba(54, 214, 245, 0.25);">
+                            <span class="index-name" style="color: var(--accent-cyan);">CUTOFF</span>
+                            <span class="index-price" style="color: var(--accent-cyan); font-size: 10.5px; font-family: var(--font-mono);">16:00 IST</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Topbar Actions -->
+                <div class="topbar-right">
+                    <!-- Global Stock Search Autocomplete (2,620+ NSE Equities) -->
+                    <div class="global-search-container">
+                        <svg class="search-icon-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input list="stockUniverseList" id="globalStockSearch" class="global-search-input" placeholder="Search stocks... ⌘K" autocomplete="off" onchange="onGlobalStockSelect(this.value)">
+                        <datalist id="stockUniverseList"></datalist>
+                        <span class="search-kbd-shortcut">⌘K</span>
+                    </div>
+
+                    <button class="btn btn-primary btn-sm" onclick="openTransactionModal()" title="Record Buy Transaction">
+                        <span>+</span> BUY
+                    </button>
+                    <button class="btn btn-scan btn-sm" onclick="triggerScan()" title="Re-scan equities across all sectors">
+                        ⚡ SCAN
+                    </button>
+                    <button class="btn btn-reset btn-sm" onclick="resetRecommendations()" title="Purge cached picks and discover fresh ideas">
+                        🔄 RESET
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="topThemeToggleBtn" onclick="toggleThemeManual()" title="Toggle Light / Dark Mode" style="font-size: 12px; padding: 0 8px;">
+                        <span id="topThemeIcon">☀️</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- WORKSPACE PANELS -->
+            <main class="workspace">
+                <!-- ========================================================
+                     VIEW 1: COMMAND CENTER (HERO CHART, WATCHLIST, AI INTELLIGENCE)
+                     ======================================================== -->
+                <section id="view-charts" class="view-panel active">
+                    <!-- Market Command Center 2-Column Grid -->
+                    <div class="command-center-grid">
+                        <!-- Main Left Column: Hero Interactive Financial Chart -->
+                        <div class="panel" style="margin-bottom: 0;">
+                            <div class="panel-header">
+                                <div class="stock-identity-block">
+                                    <div class="stock-sym-heading" id="heroStockSymbol">RELIANCE</div>
+                                    <div class="stock-company-name" id="heroStockName">Reliance Industries Limited &bull; NSE</div>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                                    <button class="btn btn-secondary btn-sm" onclick="openIntelligenceModalFromChart()">🔥 INTEL</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="openDebateModalFromChart()">⚔️ DEBATE</button>
+                                    <button class="btn btn-primary btn-sm" onclick="openTransactionModalFromChart()">+ BUY</button>
+                                </div>
+                            </div>
+
+                            <div class="panel-body">
+                                <!-- Chart Controls Bar -->
+                                <div class="chart-controls-bar">
+                                    <div class="stock-current-price-strip">
+                                        <span class="cmp-val tabular-nums" id="chartCmp">&#8377;--</span>
+                                        <span class="cmp-change tabular-nums up" id="chartCmpChange">+0.0%</span>
+                                        <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-left: 10px;">
+                                            ATR-14: <strong id="chartAtr" style="color: var(--text-primary);">&#8377;--</strong>
+                                        </span>
+                                        <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-left: 10px;">
+                                            5D Target: <strong id="chartTarget" style="color: var(--emerald-bull);">&#8377;--</strong>
+                                        </span>
+                                    </div>
+
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <!-- Timeframe Pills -->
+                                        <div class="timeframe-pill-group">
+                                            <button class="tf-btn" onclick="setTimeframe('1mo', this)">1M</button>
+                                            <button class="tf-btn active" onclick="setTimeframe('3mo', this)">3M</button>
+                                            <button class="tf-btn" onclick="setTimeframe('6mo', this)">6M</button>
+                                            <button class="tf-btn" onclick="setTimeframe('1y', this)">1Y</button>
+                                            <button class="tf-btn" onclick="setTimeframe('2y', this)">ALL</button>
+                                        </div>
+
+                                        <!-- Forecast Toggle -->
+                                        <button class="btn btn-secondary btn-sm" id="btnToggleForecast" onclick="toggleForecastProjection()" style="font-size: 10.5px;">
+                                            5D FORECAST CONE: ON
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Subtitle / Legend Legend Strip -->
+                                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; font-family: var(--font-mono);">
+                                    <div id="chartSubtitle">Daily Close with 20-DMA and 5-Day ATR Volatility Cone Projection</div>
+                                    <div style="display: flex; gap: 14px;">
+                                        <span style="color: var(--emerald-bull);">&#x25CF; Historical Close</span>
+                                        <span style="color: #FFB020;">-- 20-DMA</span>
+                                        <span style="color: var(--accent-cyan);">- - Future 5D Target</span>
+                                        <span style="color: rgba(54, 214, 245, 0.45);">&#x25A0; ATR Uncertainty Cone</span>
+                                    </div>
+                                </div>
+
+                                <!-- Chart Canvas Stage -->
+                                <div class="chart-stage-container">
+                                    <canvas id="stockPriceChart"></canvas>
+                                </div>
+
+                                <!-- Bottom Technical Analysis & Fundamentals Grid -->
+                                <div class="tech-fund-grid" id="chartTechFundamentalsGrid">
+                                    <div class="indicator-unit">
+                                        <span class="ind-label">5D EXPECTED GAIN</span>
+                                        <span class="ind-value up" id="panelGain">--</span>
+                                    </div>
+                                    <div class="indicator-unit">
+                                        <span class="ind-label">EXPECTED RANGE</span>
+                                        <span class="ind-value" id="panelRange">--</span>
+                                    </div>
+                                    <div class="indicator-unit">
+                                        <span class="ind-label">DYNAMIC SUPPORT</span>
+                                        <span class="ind-value" id="panelSupport">--</span>
+                                    </div>
+                                    <div class="indicator-unit">
+                                        <span class="ind-label">DYNAMIC RESISTANCE</span>
+                                        <span class="ind-value" id="panelResistance">--</span>
+                                    </div>
+                                    <div class="indicator-unit">
+                                        <span class="ind-label">P/E (TTM)</span>
+                                        <span class="ind-value" id="panelPE">--</span>
+                                    </div>
+                                    <div class="indicator-unit">
+                                        <span class="ind-label">ROE / ROCE</span>
+                                        <span class="ind-value" id="panelROE">--</span>
+                                    </div>
+                                    <div class="indicator-unit">
+                                        <span class="ind-label">DEBT / EQUITY</span>
+                                        <span class="ind-value" id="panelDE">--</span>
+                                    </div>
+                                    <div class="indicator-unit">
+                                        <span class="ind-label">REV GROWTH (YoY)</span>
+                                        <span class="ind-value" id="panelRevGrowth">--</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Main Right Column: AI Prediction Intelligence Panel + Watchlist -->
+                        <div style="display: flex; flex-direction: column; gap: 16px;">
+                            <!-- Dedicated AI Prediction Intelligence Card -->
+                            <div class="ai-prediction-panel">
+                                <div class="ai-panel-header">
+                                    <span class="ai-badge">AI 5-DAY INTELLIGENCE</span>
+                                    <span style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted);" id="aiDataFreshness">T+5 FORWARD</span>
+                                </div>
+                                <div class="ai-prediction-metrics">
+                                    <div class="prediction-highlight-card">
+                                        <div class="pred-target-row">
+                                            <span class="pred-target-label">5D Price Target</span>
+                                            <span class="pred-target-val tabular-nums" id="aiTargetPrice">&#8377;--</span>
+                                        </div>
+                                        <div class="pred-cone-range">
+                                            <span>Expected Band:</span>
+                                            <strong id="aiRangeBounds" class="tabular-nums">&#8377;-- to &#8377;--</strong>
+                                        </div>
+                                    </div>
+
+                                    <div class="pred-meta-grid">
+                                        <div class="pred-meta-item">
+                                            <div class="pred-meta-label">Model Direction</div>
+                                            <div class="pred-meta-val" id="aiStanceContainer">
+                                                <span class="stance-pill bull" id="aiStanceBadge">BULLISH</span>
+                                            </div>
+                                        </div>
+                                        <div class="pred-meta-item">
+                                            <div class="pred-meta-label">Composite Score</div>
+                                            <div class="pred-meta-val tabular-nums" id="aiScoreVal">--/100</div>
+                                        </div>
+                                        <div class="pred-meta-item">
+                                            <div class="pred-meta-label">Volatility Risk</div>
+                                            <div class="pred-meta-val" id="aiRiskVal">Moderate</div>
+                                        </div>
+                                        <div class="pred-meta-item">
+                                            <div class="pred-meta-label">Model Version</div>
+                                            <div class="pred-meta-val" style="font-size: 11px;">v2.1-Quant</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="ai-disclaimer-box">
+                                        <strong>Statistical Estimation Disclosure:</strong> All forecasts represent probabilistic forward trajectory scenarios calibrated with 14-day ATR envelopes. Projections are quantitative models, not guaranteed returns.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Interactive Benchmark Watchlist -->
+                            <div class="watchlist-panel">
+                                <div class="watchlist-header">
+                                    <span style="font-size: 11.5px; font-weight: 700; color: var(--text-primary); font-family: var(--font-mono);">
+                                        WATCHLIST (NIFTY LEADERS)
+                                    </span>
+                                    <span style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">CLICK TO LOAD</span>
+                                </div>
+                                <div class="watchlist-list" id="watchlistContainer">
+                                    <!-- Populated dynamically with liquid stocks -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================================
+                     VIEW 2: 5D RECOMMENDATIONS (TOP CURATED IDEAS)
+                     ======================================================== -->
+                <section id="view-recs" class="view-panel">
+                    <div class="stat-grid">
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <span class="stat-title">Active Opportunities</span>
+                                <span class="stat-icon">&#x2605;</span>
+                            </div>
+                            <div id="statRecCount" class="stat-value tabular-nums">5 Ideas</div>
+                            <div class="stat-subtitle">Curated Nifty 50/100 Universe</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <span class="stat-title">Avg Expected 5D Gain</span>
+                                <span class="stat-icon">&#x2197;</span>
+                            </div>
+                            <div id="statAvgGain" class="stat-value tabular-nums up">+3.8%</div>
+                            <div class="stat-subtitle up">ATR-14 Volatility Grounded</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <span class="stat-title">Macro Sentiment</span>
+                                <span class="stat-icon">&#x25C9;</span>
+                            </div>
+                            <div class="stat-value">Positive Drift</div>
+                            <div class="stat-subtitle">Domestic Inflows Net Buyer</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <span class="stat-title">Auditability</span>
+                                <span class="stat-icon">&#x2696;</span>
+                            </div>
+                            <div class="stat-value">SEBI Compliant</div>
+                            <div class="stat-subtitle">Immutable Forecast Trail</div>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Today's Pre-Market Top 5-Day Opportunities</span>
+                                <div class="panel-subtitle">Evaluation Point: 5th Trading Session Close &bull; Sector-Diversified Screening</div>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-scan" onclick="triggerScan()">⚡ RE-RUN SCREENER</button>
+                                <button class="btn btn-reset" onclick="resetRecommendations()">🔄 ROTATE PICKS</button>
+                            </div>
+                        </div>
+                        <div id="recsGrid" class="rec-grid">
+                            <div style="padding: 30px; text-align: center; color: var(--text-muted); grid-column: 1 / -1;">
+                                Loading live quantitative market recommendations...
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================================
+                     VIEW 3: PORTFOLIO & FIFO ACCOUNTING (WITH DELETE STOCK FEATURE)
+                     ======================================================== -->
+                <section id="view-portfolio" class="view-panel">
+                    <div class="stat-grid">
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <span class="stat-title">Total Invested</span>
+                                <span class="stat-icon">&#x20B9;</span>
+                            </div>
+                            <div id="statTotalInvested" class="stat-value tabular-nums">&#8377;0.00</div>
+                            <div class="stat-subtitle">FIFO Purchase Cost Basis</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <span class="stat-title">Current Market Value</span>
+                                <span class="stat-icon">&#x25CE;</span>
+                            </div>
+                            <div id="statCurrentVal" class="stat-value tabular-nums">&#8377;0.00</div>
+                            <div class="stat-subtitle">Live NSE Closing Quotes</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <span class="stat-title">Unrealized P&amp;L (Gross)</span>
+                                <span class="stat-icon">&#x25B2;</span>
+                            </div>
+                            <div id="statUnrealizedPnl" class="stat-value tabular-nums">&#8377;0.00</div>
+                            <div id="statUnrealizedPct" class="stat-subtitle tabular-nums">+0.00%</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <span class="stat-title">Net P&amp;L (Post-Tax &amp; Fees)</span>
+                                <span class="stat-icon">&#x2714;</span>
+                            </div>
+                            <div id="statNetPnl" class="stat-value tabular-nums">&#8377;0.00</div>
+                            <div id="statTotalFees" class="stat-subtitle tabular-nums">STT, Brokerage &amp; GST accounted</div>
+                        </div>
+                    </div>
+
+                    <!-- Holding Warning Alerts Banner -->
+                    <div id="portfolioAlertsBanner" style="display: none; margin-bottom: 20px;"></div>
+
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Active Investment Holdings (FIFO Cost Accounting)</span>
+                                <div class="panel-subtitle">Strict lot conservation &bull; Statutory Indian taxes and charges deducted</div>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" onclick="openCorporateActionsModal()">📜 CORPORATE ACTIONS</button>
+                                <button class="btn btn-primary" onclick="openTransactionModal()">+ ADD TRANSACTION</button>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="terminal-table">
+                                <thead>
+                                    <tr>
+                                        <th>Stock</th>
+                                        <th class="num">Qty</th>
+                                        <th class="num">Avg Buy (FIFO)</th>
+                                        <th class="num">CMP</th>
+                                        <th class="num">Market Value</th>
+                                        <th class="num">Unrealized P&amp;L</th>
+                                        <th class="num">Net (Post-Tax)</th>
+                                        <th>Tax Status</th>
+                                        <th>Risk &amp; Alerts</th>
+                                        <th style="text-align: right;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="portfolioTableBody">
+                                    <tr>
+                                        <td colspan="10" style="text-align: center; color: var(--text-dim); padding: 32px;">
+                                            No holdings recorded yet. Click "+ Record Buy" to log stock investments.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================================
+                     VIEW 4: FORECAST SCORECARD & BACKTESTING EVIDENCE
+                     ======================================================== -->
+                <section id="view-scorecard" class="view-panel">
+                    <!-- Institutional Forecast Integrity Charter -->
+                    <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 20px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                            <span style="font-weight: 700; color: var(--accent-cyan); font-size: 13px; font-family: var(--font-mono);">
+                                ⚖️ INSTITUTIONAL 5-SESSION FORECAST CHARTER
+                            </span>
+                            <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">
+                                Cutoff: 16:00 IST &bull; Horizon: T+5 Sessions &bull; 0.15% Indian Friction Deducted
+                            </span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; margin-top: 10px; font-size: 11.5px; color: var(--text-secondary); line-height: 1.5;">
+                            <div>&bull; <strong>1. Target Definition:</strong> Day 0 Close to Day 5 Close forward log return and two-sided ATR envelope.</div>
+                            <div>&bull; <strong>2. Timing Cutoff:</strong> Strict 16:00 IST cutoff. Day 1 is next trading session ($T+1$); evaluation is Day $T+5$.</div>
+                            <div>&bull; <strong>3. Zero Hallucinations:</strong> Verified timestamped NSE prices; no artificial score injections on missing data.</div>
+                            <div>&bull; <strong>4. Three-Baseline Evidence:</strong> Evaluated against No-Change, Nifty 50 Buy &amp; Hold, and 20-DMA Momentum.</div>
+                        </div>
+                    </div>
+
+                    <div class="stat-grid">
+                        <div class="stat-card">
+                            <div class="stat-header"><span class="stat-title">Directional Hit Rate</span></div>
+                            <div id="scorecardHitRate" class="stat-value tabular-nums">--</div>
+                            <div class="stat-subtitle" id="scorecardHitRateSub">Pending completed T+5 forward evaluations</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-header"><span class="stat-title">Alpha vs Nifty 50</span></div>
+                            <div id="scorecardAlpha" class="stat-value tabular-nums">--</div>
+                            <div class="stat-subtitle" id="scorecardAlphaSub">Excess return over buy-and-hold</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-header"><span class="stat-title">Mean Absolute Error</span></div>
+                            <div id="scorecardError" class="stat-value tabular-nums">--</div>
+                            <div class="stat-subtitle" id="scorecardErrorSub">Price forecast deviation</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-header"><span class="stat-title">Downside Surprises</span></div>
+                            <div id="scorecardDownside" class="stat-value tabular-nums">--</div>
+                            <div class="stat-subtitle" id="scorecardDownsideSub">Drawdowns exceeding -3%</div>
+                        </div>
+                    </div>
+
+                    <!-- Phase 3: Point-in-Time Historical Backtest Table -->
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Point-in-Time Backtest Evidence Against 3 Zero-Alpha Baselines</span>
+                                <div class="panel-subtitle">Zero data leakage &bull; Strict close-to-close evaluation &bull; 0.15% roundtrip friction deducted</div>
+                            </div>
+                            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                <select id="backtestLookbackSelect" class="form-control" style="width: 100px; height: 30px; font-size: 11px;">
+                                    <option value="6mo" selected>6 Months</option>
+                                    <option value="1y">1 Year</option>
+                                    <option value="2y">2 Years</option>
+                                </select>
+                                <button class="btn btn-primary btn-sm" onclick="runBacktestSimulation()">⚡ RUN BACKTEST</button>
+                                <a href="/reports/PredictaStock_Institutional_Backtest_Paper.pdf" target="_blank" class="btn btn-secondary btn-sm">📑 PAPER (PDF)</a>
+                            </div>
+                        </div>
+                        <div class="panel-body" style="padding: 0;">
+                            <div class="table-responsive">
+                                <table class="terminal-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Model / Benchmark Strategy</th>
+                                            <th class="num">Sample (N)</th>
+                                            <th class="num">Directional Hit Rate</th>
+                                            <th class="num">Avg Net Return (5D)</th>
+                                            <th class="num">Alpha vs Nifty 50</th>
+                                            <th class="num">Profit Factor</th>
+                                            <th class="num">Win / Loss</th>
+                                            <th class="num">Max Drawdown</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="backtestBaselinesTableBody">
+                                        <tr id="backtestLoadingRow">
+                                            <td colspan="8" style="text-align: center; color: var(--text-dim); padding: 24px; font-family: var(--font-mono);">
+                                                Loading verified point-in-time backtest evidence against 3 zero-alpha baselines...
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Completed Forecasts vs Nifty Table -->
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-title">Completed 5-Day Forward Evaluations</span>
+                            <span class="panel-subtitle">Permanent immutable ledger of original forecasts</span>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="terminal-table">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Start Date</th>
+                                        <th>End Date</th>
+                                        <th class="num">Ref Price</th>
+                                        <th class="num">Target</th>
+                                        <th class="num">Pred %</th>
+                                        <th class="num">Actual Close</th>
+                                        <th class="num">Actual %</th>
+                                        <th class="num">Nifty 50 %</th>
+                                        <th class="num">Alpha %</th>
+                                        <th>Outcome</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="scorecardTableBody">
+                                    <tr><td colspan="11" style="text-align: center; color: var(--text-dim); padding: 32px;">Evaluating 5-day session endpoints...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================================
+                     VIEW 5: MORNING BRIEFING CENTER (PDF & HTML)
+                     ======================================================== -->
+                <section id="view-reports" class="view-panel">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">5:45 AM IST Daily Pre-Market Briefing Center</span>
+                                <div class="panel-subtitle">10-Section algorithmic market dispatch for Indian institutional investors</div>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" onclick="generateReportManual()">BUILD FRESH REPORT</button>
+                                <a id="downloadPdfBtn" href="/reports/report_latest.pdf" target="_blank" class="btn btn-primary">DOWNLOAD REPORT (PDF)</a>
+                            </div>
+                        </div>
+                        <div class="panel-body">
+                            <iframe id="reportPreviewFrame" style="width: 100%; height: 720px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-surface);"></iframe>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================================
+                     VIEW 6: RISK & SECTOR CONCENTRATION RADAR
+                     ======================================================== -->
+                <section id="view-risk" class="view-panel">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Portfolio Sector Concentration &amp; Diversification Radar</span>
+                                <div class="panel-subtitle">Regulatory limit: 25% Maximum Allocation Per Sector</div>
+                            </div>
+                        </div>
+                        <div class="panel-body" id="sectorRadarContent">
+                            <div style="color: var(--text-muted);">Calculating portfolio sector exposure weights...</div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <!-- ====================================================================
+         MODAL: DELETE STOCK CONFIRMATION (USER REQUESTED FEATURE)
+         ==================================================================== -->
+    <div id="deleteStockModal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 440px;">
+            <div class="modal-header">
+                <span class="modal-title" style="color: var(--coral-bear);">🗑️ DELETE STOCK FROM PORTFOLIO</span>
+                <button class="modal-close-btn" onclick="closeDeleteStockModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 13px; color: var(--text-primary); margin-bottom: 12px; line-height: 1.5;">
+                    Are you sure you want to delete <strong id="deleteStockModalSymbol" style="color: var(--accent-cyan);">STOCK</strong> from your portfolio?
+                </p>
+                <div style="background: var(--coral-bg); border: 1px solid var(--coral-border); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 11.5px; color: #FFA5B4; margin-bottom: 18px; line-height: 1.4;">
+                    <strong>Action Warning:</strong> This will delete all purchase and sell transaction records for this scrip from your portfolio ledger. Your FIFO cost basis and net P&amp;L will be recalculated immediately.
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                    <button type="button" class="btn btn-secondary" onclick="closeDeleteStockModal()">CANCEL</button>
+                    <button type="button" class="btn btn-reset" id="btnConfirmDeleteStock" onclick="confirmDeleteStock()">CONFIRM DELETE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Record Investment Transaction (FIFO) -->
+    <div id="transactionModal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header">
+                <span class="modal-title">+ RECORD INVESTMENT TRANSACTION</span>
+                <button class="modal-close-btn" onclick="closeTransactionModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="txForm" onsubmit="submitTransaction(event)">
+                    <div class="form-group">
+                        <label>Select or Search Official NSE Stock</label>
+                        <input list="stockUniverseList" id="txSymbol" class="form-control" placeholder="Search symbol or company name (e.g. RELIANCE, TCS)..." required oninput="onStockChange(this.value)" autocomplete="off">
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="form-group">
+                            <label>Action</label>
+                            <select id="txType" class="form-control" onchange="recalcFees()">
+                                <option value="BUY">BUY (Long Entry)</option>
+                                <option value="SELL">SELL (FIFO Exit)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Date</label>
+                            <input type="date" id="txDate" class="form-control" required>
+                        </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="form-group">
+                            <label>Price (&#8377;)</label>
+                            <input type="number" id="txPrice" step="0.05" class="form-control" required oninput="recalcFees()">
+                        </div>
+                        <div class="form-group">
+                            <label>Quantity (Shares)</label>
+                            <input type="number" id="txQty" min="1" class="form-control" required oninput="recalcFees()">
+                        </div>
+                    </div>
+
+                    <!-- Live Indian Statutory Fee Calculator Box -->
+                    <div class="fee-calc-box">
+                        <div class="fee-row"><span>Turnover Value:</span><span id="feeTurnover">&#8377;0.00</span></div>
+                        <div class="fee-row"><span>Securities Transaction Tax (STT 0.1%):</span><span id="feeSTT">&#8377;0.00</span></div>
+                        <div class="fee-row"><span>Brokerage (Discount Cap):</span><span id="feeBrokerage">&#8377;20.00</span></div>
+                        <div class="fee-row"><span>Stamp Duty &amp; Exch Charges:</span><span id="feeStamp">&#8377;0.00</span></div>
+                        <div class="fee-row"><span>GST (18% on Brokerage &amp; Fees):</span><span id="feeGST">&#8377;3.60</span></div>
+                        <div class="fee-row fee-total"><span>Total Statutory Costs:</span><span id="feeTotal" style="color: var(--accent-cyan);">&#8377;23.60</span></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Thesis Notes (Optional)</label>
+                        <input type="text" id="txNotes" class="form-control" placeholder="e.g. 5-day breakout trigger on morning report">
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px;">
+                        <button type="button" class="btn btn-secondary" onclick="closeTransactionModal()">CANCEL</button>
+                        <button type="submit" class="btn btn-primary">SAVE TRANSACTION</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: 7 AI Analyst Desks & Debate -->
+    <div id="debateModal" class="modal-overlay">
+        <div class="modal-box large">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-title" style="color: var(--accent-cyan);">⚔️ 7 AI ANALYST DESKS &amp; ADVERSARIAL DEBATE</span>
+                    <div id="debateModalSubtitle" style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px;">Synthesizing Multi-Factor Signals...</div>
+                </div>
+                <button class="modal-close-btn" onclick="closeDebateModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="debateModalBody">
+                <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                    Summoning 7 AI Analyst Specialist Desks...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Hot News & Institutional Flows -->
+    <div id="intelligenceModal" class="modal-overlay">
+        <div class="modal-box large">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-title" style="color: var(--emerald-bull);">🔥 STOCK INTELLIGENCE: HOT NEWS &amp; FLOWS</span>
+                    <div id="intelModalSubtitle" style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px;">Live Financial RSS &amp; Liquidity Flow...</div>
+                </div>
+                <button class="modal-close-btn" onclick="closeIntelligenceModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="intelModalBody">
+                <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                    Querying live internet headlines &amp; money flow breakdown...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Corporate Actions Ledger -->
+    <div id="corporateActionsModal" class="modal-overlay">
+        <div class="modal-box large">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-title" style="color: var(--accent-violet);">📜 CORPORATE ACTIONS &amp; LOT CONSERVATION</span>
+                    <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px;">Stock Splits, Bonus Issues &amp; Dividend Ledger</div>
+                </div>
+                <button class="modal-close-btn" onclick="closeCorporateActionsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                    <span style="font-size: 12px; font-weight: 600; color: var(--text-primary);">Recorded Actions:</span>
+                    <button class="btn btn-secondary btn-sm" onclick="toggleRecordCAForm()">+ RECORD NEW ACTION</button>
+                </div>
+
+                <div id="recordCAFormContainer" style="display: none; background: var(--bg-surface); border: 1px solid var(--border-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: flex-end;">
+                        <div>
+                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Symbol</label>
+                            <input id="caSymbol" type="text" class="form-control" placeholder="TCS" style="text-transform: uppercase;">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Action Type</label>
+                            <select id="caType" class="form-control">
+                                <option value="SPLIT">Stock Split</option>
+                                <option value="BONUS">Bonus Issue</option>
+                                <option value="DIVIDEND">Dividend</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Ratio</label>
+                            <input id="caRatio" type="text" class="form-control" placeholder="2:1">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Adj Factor</label>
+                            <input id="caFactor" type="number" step="0.1" class="form-control" placeholder="2.0">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Ex-Date</label>
+                            <input id="caExDate" type="date" class="form-control">
+                        </div>
+                        <div>
+                            <button class="btn btn-primary" style="width: 100%; height: 34px;" onclick="submitCorporateAction()">APPLY</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="terminal-table">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Action</th>
+                                <th>Ex-Date</th>
+                                <th>Ratio</th>
+                                <th class="num">Factor</th>
+                                <th>Status</th>
+                                <th>Applied At</th>
+                            </tr>
+                        </thead>
+                        <tbody id="corporateActionsTableBody">
+                            <tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 24px;">Loading corporate actions...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scanner Progress Stage Overlay -->
+    <div id="globeLoaderOverlay">
+        <div class="globe-loader-stage">
+            <canvas id="globeCanvas"></canvas>
+        </div>
+        <div class="globe-hud-content">
+            <div class="globe-hud-badge">
+                <span>⚡ QUANTITATIVE PIPELINE // NSE REALTIME</span>
+            </div>
+            <h2 id="globeLoaderTitle" class="globe-hud-title">SCREENING BENCHMARK EQUITIES UNIVERSE</h2>
+            <p id="globeLoaderSubtitle" class="globe-hud-subtitle">Evaluating 14-day ATR volatility envelopes across NSE leaders...</p>
+            
+            <!-- Real-Time Screening Metrics & Percentage Readout -->
+            <div class="globe-metrics-ticker">
+                <div class="globe-percent-value" id="globePercentVal">0%</div>
+                <div class="globe-status-pill" id="globeCountPill">0 of 58 Equities Evaluated</div>
+            </div>
+
+            <div class="globe-progress-track">
+                <div id="globeProgressBar" class="globe-progress-fill"></div>
+            </div>
+            <div id="globeStepText" class="globe-step-ticker">INITIALIZING SCREENING ENGINE...</div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

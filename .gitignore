@@ -1,0 +1,54 @@
+# Environment variables and secrets (STRICTLY EXCLUDED)
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python cache & compiled binaries
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Database files & Runtime caches
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+data/*.db
+backend/app/data/*.db
+backend/app/data/backups/
+
+# Logs & Temporary files
+*.log
+scratch/
+.playwright-mcp/
+
+# OS Artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE Artifacts
+.vscode/
+.idea/

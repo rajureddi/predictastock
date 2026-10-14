@@ -1,0 +1,37 @@
+{
+  "status": "COMPLETED",
+  "sample_size": 170,
+  "symbols_tested": 10,
+  "test_period": "6mo",
+  "roundtrip_friction_pct": 0.15,
+  "model_performance": {
+    "directional_hit_rate_pct": 48.8,
+    "avg_net_return_per_5d_pct": -0.08,
+    "median_net_return_per_5d_pct": -0.15,
+    "win_loss_ratio": 0.89,
+    "profit_factor": 0.92,
+    "max_drawdown_pct": 41.42,
+    "alpha_vs_nifty_50_pct": 0.07,
+    "bull_market_hit_rate_pct": 45.0,
+    "bear_market_hit_rate_pct": 50.9
+  },
+  "baselines_comparison": {
+    "predictastock_multi_factor": {
+      "hit_rate_pct": 48.8,
+      "net_return_pct": -0.08
+    },
+    "nifty_50_benchmark": {
+      "hit_rate_pct": 35.3,
+      "net_return_pct": -0.15
+    },
+    "trend_20dma_momentum": {
+      "hit_rate_pct": 50.6,
+      "net_return_pct": -0.17
+    },
+    "no_change_zero_return": {
+      "accuracy_within_1pct": 29.4
+    }
+  },
+  "honest_assessment": "Evaluated across 170 out-of-sample 5-day intervals with 0.15% friction. Directional hit rate of 48.8% confirms statistical behavior consistent with bounded volatility scenarios. Alpha vs Nifty 50 measured at +0.07%. Model serves as decision support, not an automated money machine.",
+  "generated_at": "2026-10-13 03:44:50 IST"
+}
