@@ -20,6 +20,7 @@ from app.services.market_data import get_nifty50_live_status, get_overnight_glob
 from app.services.prediction_engine import get_latest_recommendations
 from app.services.portfolio import compute_portfolio_fifo
 from app.services.backtester import get_forecast_scorecard
+from app.services.tapetide_service import get_fii_dii_summary
 
 
 def get_t5_audit_summary() -> Dict[str, Any]:
@@ -133,6 +134,7 @@ def generate_morning_report() -> Dict[str, Any]:
     portfolio = compute_portfolio_fifo()
     scorecard = get_forecast_scorecard()
     t5_audit = get_t5_audit_summary()
+    fii_dii = get_fii_dii_summary()
     
     nifty_display = f"{macro['nifty50_price']:,.2f}" if macro.get("nifty50_price") is not None else "Feed Offline"
     nifty_chg_display = f"{macro['nifty50_change_pct']:+0.2f}%" if macro.get("nifty50_change_pct") is not None else "N/A"
@@ -197,7 +199,8 @@ def generate_morning_report() -> Dict[str, Any]:
     <!-- 1. Executive Summary & Overnight Handover -->
     <div class="section">
         <h2>1. Executive Summary &amp; Global Overnight Handover</h2>
-        <p style="margin: 0; font-size: 13px; color: #334155; line-height: 1.55;">Market benchmark: Nifty 50 closed at <strong>{nifty_display}</strong> with India VIX at <strong>{vix_display}</strong>. Overnight US market cues: S&P 500 at <strong>{handover['sp500_change_pct']:+0.2f}%</strong>, Nasdaq at <strong>{handover['nasdaq_change_pct']:+0.2f}%</strong>, Brent Crude at <strong>{handover['crude_change_pct']:+0.2f}%</strong>. Quantitative screening evaluated liquid Indian equities and shortlisted <strong>{len(display_recs)} high-conviction 5-day swing setups</strong> with strict ATR Stop-Loss risk controls.</p>
+        <p style="margin: 0 0 8px 0; font-size: 13px; color: #334155; line-height: 1.55;">Market benchmark: Nifty 50 closed at <strong>{nifty_display}</strong> with India VIX at <strong>{vix_display}</strong>. Overnight US market cues: S&P 500 at <strong>{handover['sp500_change_pct']:+0.2f}%</strong>, Nasdaq at <strong>{handover['nasdaq_change_pct']:+0.2f}%</strong>, Brent Crude at <strong>{handover['crude_change_pct']:+0.2f}%</strong>. Quantitative screening evaluated liquid Indian equities and shortlisted <strong>{len(display_recs)} high-conviction 5-day swing setups</strong> with strict ATR Stop-Loss risk controls.</p>
+        {"<div style='font-size:12px; color:#475569; background:#F8FAFC; border:1px solid #E2E8F0; padding:8px 12px; border-radius:4px;'><strong>Institutional Exchange Cash Flows (FII/DII):</strong> FIIs recorded <strong>" + f"{fii_dii['fii_net_cr']:+,.1f} Cr" + "</strong> net and DIIs recorded <strong>" + f"{fii_dii['dii_net_cr']:+,.1f} Cr" + f"</strong> net absorption ({fii_dii.get('month_label', 'Current Month')}).</div>" if fii_dii.get("available") and fii_dii.get("fii_net_cr") is not None else ""}
     </div>
 
     <!-- 2. Top High-Conviction 5-Day Swing Setups -->

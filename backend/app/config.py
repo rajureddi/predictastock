@@ -91,3 +91,18 @@ TIER1_MIN_DELIVERY_SURGE = 1.8
 TIER1_MIN_CMF = 0.12
 TIER1_REQUIRE_NIFTY_ABOVE_20DMA = True
 
+# Tapetide MCP / Financial Data Gateway (https://mcp.tapetide.com/mcp)
+TAPETIDE_TOKEN = os.getenv("TAPETIDE_TOKEN", "tpt_rt_ca1802c8e79a236347b7a3761514b7141032312bc67470e7878eb1fa")
+TAPETIDE_MCP_URL = os.getenv("TAPETIDE_MCP_URL", "https://mcp.tapetide.com/mcp")
+TAPETIDE_DAILY_CALL_LIMIT = int(os.getenv("TAPETIDE_DAILY_CALL_LIMIT", "50"))
+TAPETIDE_SAFETY_BUFFER = 5  # Reserve 5 calls as safety buffer (stop at 45 calls)
+
+# Dhan Broker Integration (api.dhan.co)
+DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "")
+DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "")
+
+# Upstox Broker Integration (api.upstox.com/v2)
+UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY", "")
+UPSTOX_API_SECRET = os.getenv("UPSTOX_API_SECRET", "")
+UPSTOX_ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN", "")
+

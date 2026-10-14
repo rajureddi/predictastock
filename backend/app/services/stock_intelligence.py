@@ -18,6 +18,7 @@ from app.data.nifty_constituents import get_symbol_info
 from app.services.market_data import get_stock_history, get_latest_quote, is_quote_valid
 from app.services.indicators import compute_all_indicators
 from app.services.news_sentiment import fetch_stock_news_rss, analyze_sentiment, POSITIVE_KEYWORDS, NEGATIVE_KEYWORDS
+from app.services.tapetide_service import get_stock_enrichment
 
 
 def get_stock_deep_intelligence(symbol: str) -> Dict[str, Any]:
@@ -197,6 +198,24 @@ def get_stock_deep_intelligence(symbol: str) -> Dict[str, Any]:
         f"Chaikin Money Flow (CMF): {cmf_val:+0.3f} signaling {cmf_signal}"
     ]
 
+    # 4. Tapetide Financial Intelligence Enrichment (Options IV & Governance Pledge)
+    tapetide_data = get_stock_enrichment(clean_sym)
+    if tapetide_data.get("options", {}).get("available"):
+        opt = tapetide_data["options"]
+        if opt.get("iv_rank") is not None:
+            iv_regime = "High Implied Volatility (Premium Expansion)" if opt["iv_rank"] > 60 else "Contained Volatility (Mean Reversion)"
+            tech_signals.append(f"Options Implied Volatility: IV Rank {opt['iv_rank']}%, IV Percentile {opt.get('iv_percentile', '--')}% ({iv_regime})")
+
+    if tapetide_data.get("governance", {}).get("available"):
+        gov = tapetide_data["governance"]
+        pledged = gov.get("pledged_pct", 0.0)
+        gov_status = "Zero / Unpledged Promoter Shares" if pledged == 0 else (f"{pledged}% Pledged (Caution: Solvency Hazard)" if pledged > 15 else f"{pledged}% Pledged")
+        fund_signals.append(f"Promoter Governance: {gov_status}")
+
+    if tapetide_data.get("macro_fii_dii", {}).get("available"):
+        fii_dii = tapetide_data["macro_fii_dii"]
+        flow_signals.append(f"Exchange Cash Flow: FII {fii_dii.get('fii_net_cr', 0):+,.1f} Cr, DII {fii_dii.get('dii_net_cr', 0):+,.1f} Cr ({fii_dii.get('month_label', 'Active')})")
+
     # Composite Score
     composite_score = round(
         (tech_score * 0.35) +
@@ -211,6 +230,7 @@ def get_stock_deep_intelligence(symbol: str) -> Dict[str, Any]:
         "name": company_name,
         "sector": sector,
         "cmp": cmp,
+        "tapetide": tapetide_data,
         "day_change_pct": day_chg_pct,
         "volume": volume,
         "turnover_cr": turnover_cr,

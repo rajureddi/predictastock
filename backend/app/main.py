@@ -48,6 +48,8 @@ from app.services.portfolio import (
 from app.services.backtester import evaluate_pending_forecasts, get_forecast_scorecard
 from app.services.report_generator import generate_morning_report
 from app.services.scheduler import start_scheduler
+from app.services.tapetide_service import get_quota_status, get_stock_enrichment, get_fii_dii_summary
+from app.services.broker_connectors import get_all_services_status, sync_broker_holdings
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +295,44 @@ def delete_portfolio_transaction_endpoint(
     """Deletes a specific individual transaction by its unique ID for the authenticated user."""
     user_id = current_user["id"]
     return delete_transaction(transaction_id=transaction_id, user_id=user_id)
+
+
+# --------------------------------------------------------------------------
+# EXTERNAL INTEGRATIONS: TAPETIDE MCP & BROKER CONNECTORS (DHAN & UPSTOX)
+# --------------------------------------------------------------------------
+@app.get("/api/integrations/status")
+def get_integrations_status_endpoint() -> Dict[str, Any]:
+    """Returns connectivity and daily quota usage across Tapetide, Dhan, and Upstox."""
+    return get_all_services_status()
+
+
+@app.post("/api/integrations/broker/sync")
+def sync_broker_holdings_endpoint(
+    broker: str = Query("dhan", description="Broker identifier: 'dhan' or 'upstox'"),
+    current_user: Dict[str, Any] = Depends(get_current_user_from_key)
+) -> Dict[str, Any]:
+    """Synchronizes external broker holdings directly into the user's FIFO transaction ledger."""
+    user_id = current_user["id"]
+    return sync_broker_holdings(broker_name=broker, user_id=user_id)
+
+
+@app.get("/api/intelligence/tapetide/{symbol}")
+def get_tapetide_enrichment_endpoint(symbol: str) -> Dict[str, Any]:
+    """Fetches high-value Tapetide quantitative metrics (Options IV rank, promoter pledge %, FII/DII flow)."""
+    return get_stock_enrichment(symbol)
+
+
+@app.post("/api/integrations/credentials")
+def update_credentials_endpoint(
+    body: Dict[str, Any],
+    current_user: Dict[str, Any] = Depends(get_current_user_from_key)
+) -> Dict[str, Any]:
+    """Updates API credentials for Dhan, Upstox, or Tapetide and saves them into the runtime environment."""
+    from app.services.broker_connectors import update_integration_credentials
+    service = body.get("service", "")
+    creds = body.get("credentials", {})
+    return update_integration_credentials(service, creds)
+
 
 
 
