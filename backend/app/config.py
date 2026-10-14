@@ -97,12 +97,9 @@ TAPETIDE_MCP_URL = os.getenv("TAPETIDE_MCP_URL", "https://mcp.tapetide.com/mcp")
 TAPETIDE_DAILY_CALL_LIMIT = int(os.getenv("TAPETIDE_DAILY_CALL_LIMIT", "50"))
 TAPETIDE_SAFETY_BUFFER = 5  # Reserve 5 calls as safety buffer (stop at 45 calls)
 
-# Dhan Broker Integration (api.dhan.co)
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "")
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "")
-
 # Upstox Broker Integration (api.upstox.com/v2)
 UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY", "")
 UPSTOX_API_SECRET = os.getenv("UPSTOX_API_SECRET", "")
-UPSTOX_ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN", "")
+UPSTOX_ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN", "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0VUJBRlgiLCJqdGkiOiI2YWNmZTFlMWM1OGY4ZjUzODcyNWRiY2YiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlzRXh0ZW5kZWQiOnRydWUsImlhdCI6MTc5MjAwODY3MywiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxODIzNTUxMjAwfQ.WtP1s2d0TZjwzQaC-0MGLG8NTUeCQZDNHPSD_ZX7eEI")
+
 

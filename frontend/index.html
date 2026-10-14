@@ -647,13 +647,13 @@
                                 <div class="panel-subtitle">Strict lot conservation &bull; Statutory Indian taxes and charges deducted</div>
                             </div>
                             <div style="display: flex; gap: 8px;">
-                                <button class="btn btn-secondary" onclick="openIntegrationsModal('sync')" title="Sync portfolio holdings from Dhan or Upstox Demat">
+                                <button class="btn btn-secondary" onclick="openIntegrationsModal('sync')" title="Sync portfolio holdings directly from Upstox Demat">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="23 4 23 10 17 10"></polyline>
                                         <polyline points="1 20 1 14 7 14"></polyline>
                                         <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
                                     </svg>
-                                    Sync Dhan / Upstox
+                                    Sync Upstox Demat
                                 </button>
                                 <button class="btn btn-secondary" onclick="openCorporateActionsModal()">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1190,7 +1190,7 @@
                         Institutional Integrations &amp; Broker Gateways
                     </span>
                     <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px;">
-                        Tapetide Financial Intelligence MCP &bull; Dhan HQ API v2 &bull; Upstox API v2
+                        Tapetide Financial Intelligence MCP &bull; Upstox Open API v2 Demat Gateway
                     </div>
                 </div>
                 <button class="modal-close-btn" onclick="closeIntegrationsModal()">&times;</button>
@@ -1232,60 +1232,59 @@
                     </div>
                 </div>
 
-                <!-- 2. BROKER CONNECTORS: DHAN & UPSTOX -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
-                    <!-- DHAN HQ CARD -->
-                    <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 16px; display: flex; flex-direction: column; justify-content: space-between;">
-                        <div>
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                                <div style="font-size: 12.5px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display);">
-                                    Dhan HQ API v2
-                                </div>
-                                <span id="modalDhanStatusBadge" class="stance-pill neutral" style="font-size: 9.5px;">DISCONNECTED</span>
-                            </div>
-                            <p style="font-size: 11px; color: var(--text-muted); line-height: 1.45; margin-bottom: 12px;">
-                                Direct integration with Dhan's REST gateway (<code style="font-family: var(--font-mono);">api.dhan.co/v2</code>). Fetches long-term demat holdings and updates the FIFO cost ledger.
-                            </p>
-                            <div class="form-group" style="margin-bottom: 8px;">
-                                <label style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted);">Client ID</label>
-                                <input id="inputDhanClientId" type="text" class="form-control" placeholder="1100..." style="font-size: 11px;">
-                            </div>
-                            <div class="form-group" style="margin-bottom: 12px;">
-                                <label style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted);">Access Token / JWT</label>
-                                <input id="inputDhanToken" type="password" class="form-control" placeholder="eyJhbGciOi..." style="font-size: 11px; font-family: var(--font-mono);">
-                            </div>
+                <!-- 2. UPSTOX DEMAT GATEWAY SECTION -->
+                <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 16px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-mint); box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);"></span>
+                            <span style="font-size: 13px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display);">
+                                Upstox API v2 &bull; Direct Demat Holdings &amp; Execution
+                            </span>
                         </div>
-                        <div style="display: flex; gap: 8px; margin-top: 10px;">
-                            <button class="btn btn-secondary btn-sm" style="flex: 1;" onclick="saveDhanCredentials()">Save Keys</button>
-                            <button class="btn btn-primary btn-sm" style="flex: 1;" onclick="triggerBrokerSync('dhan')">Sync Portfolio</button>
+                        <span id="modalUpstoxStatusBadge" class="stance-pill bull">CONFIGURED (LIVE)</span>
+                    </div>
+
+                    <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px;">
+                        Direct connection to Upstox Open API (<code style="font-family: var(--font-mono); color: var(--accent-indigo);">api.upstox.com/v2</code>). Synchronizes your long-term equity delivery holdings, stock quantities, and acquisition prices into PredictaStock's FIFO accounting ledger.
+                    </div>
+
+                    <!-- User Account & Token Diagnostics Strip -->
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px;">
+                        <div style="background: var(--bg-base); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">UPSTOX CLIENT ID</div>
+                            <div style="font-size: 12.5px; font-weight: 700; color: var(--accent-mint); font-family: var(--font-mono); margin-top: 2px;">4UBAFX</div>
+                        </div>
+                        <div style="background: var(--bg-base); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">GATEWAY SERVICE</div>
+                            <div style="font-size: 12px; font-weight: 600; color: var(--text-primary); font-family: var(--font-mono); margin-top: 2px;">udapi-gateway</div>
+                        </div>
+                        <div style="background: var(--bg-base); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">CURRENT PUBLIC IP</div>
+                            <div style="font-size: 12px; font-weight: 600; color: var(--accent-indigo); font-family: var(--font-mono); margin-top: 2px;">106.76.167.76</div>
                         </div>
                     </div>
 
-                    <!-- UPSTOX CARD -->
-                    <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 16px; display: flex; flex-direction: column; justify-content: space-between;">
-                        <div>
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                                <div style="font-size: 12.5px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display);">
-                                    Upstox API v2
-                                </div>
-                                <span id="modalUpstoxStatusBadge" class="stance-pill neutral" style="font-size: 9.5px;">DISCONNECTED</span>
-                            </div>
-                            <p style="font-size: 11px; color: var(--text-muted); line-height: 1.45; margin-bottom: 12px;">
-                                Direct integration with Upstox Open API (<code style="font-family: var(--font-mono);">api.upstox.com/v2</code>). Synchronizes equity holdings and lot allocations directly into FIFO accounting.
-                            </p>
-                            <div class="form-group" style="margin-bottom: 8px;">
-                                <label style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted);">API Key</label>
-                                <input id="inputUpstoxApiKey" type="text" class="form-control" placeholder="f4a9b..." style="font-size: 11px;">
-                            </div>
-                            <div class="form-group" style="margin-bottom: 12px;">
-                                <label style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted);">Access Token</label>
-                                <input id="inputUpstoxToken" type="password" class="form-control" placeholder="Bearer eyJhbGci..." style="font-size: 11px; font-family: var(--font-mono);">
-                            </div>
-                        </div>
-                        <div style="display: flex; gap: 8px; margin-top: 10px;">
-                            <button class="btn btn-secondary btn-sm" style="flex: 1;" onclick="saveUpstoxCredentials()">Save Keys</button>
-                            <button class="btn btn-primary btn-sm" style="flex: 1;" onclick="triggerBrokerSync('upstox')">Sync Portfolio</button>
-                        </div>
+                    <!-- IP Whitelist Diagnostic Alert -->
+                    <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 14px; font-size: 11px; line-height: 1.45; color: var(--text-secondary);">
+                        <strong style="color: var(--accent-mint);">Security Notice (UDAPI1221):</strong> If your Upstox Developer App has static IP whitelist protection enabled, ensure IP <code style="font-family: var(--font-mono); color: var(--accent-indigo);">106.76.167.76</code> is added in your Upstox Developer App console, or remove the static IP constraint to permit direct API calls.
+                    </div>
+
+                    <!-- Sync Actions Row -->
+                    <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 14px;">
+                        <button class="btn btn-primary" style="flex: 2; height: 36px;" onclick="triggerBrokerSync('upstox')">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                            </svg>
+                            Sync Upstox Demat Holdings to FIFO Ledger
+                        </button>
+                    </div>
+
+                    <!-- Token Update Field -->
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input id="inputUpstoxToken" type="password" class="form-control" placeholder="Update Upstox Access Token (eyJhbGci...)" style="font-size: 11px; font-family: var(--font-mono); flex: 1;">
+                        <button class="btn btn-secondary btn-sm" onclick="saveUpstoxCredentials()">Update Token</button>
                     </div>
                 </div>
 

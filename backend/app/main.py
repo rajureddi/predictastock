@@ -298,17 +298,17 @@ def delete_portfolio_transaction_endpoint(
 
 
 # --------------------------------------------------------------------------
-# EXTERNAL INTEGRATIONS: TAPETIDE MCP & BROKER CONNECTORS (DHAN & UPSTOX)
+# EXTERNAL INTEGRATIONS: TAPETIDE MCP & UPSTOX DEMAT GATEWAY
 # --------------------------------------------------------------------------
 @app.get("/api/integrations/status")
 def get_integrations_status_endpoint() -> Dict[str, Any]:
-    """Returns connectivity and daily quota usage across Tapetide, Dhan, and Upstox."""
+    """Returns connectivity and daily quota usage for Tapetide MCP and Upstox Demat Gateway."""
     return get_all_services_status()
 
 
 @app.post("/api/integrations/broker/sync")
 def sync_broker_holdings_endpoint(
-    broker: str = Query("dhan", description="Broker identifier: 'dhan' or 'upstox'"),
+    broker: str = Query("upstox", description="Broker identifier: 'upstox'"),
     current_user: Dict[str, Any] = Depends(get_current_user_from_key)
 ) -> Dict[str, Any]:
     """Synchronizes external broker holdings directly into the user's FIFO transaction ledger."""
@@ -327,11 +327,12 @@ def update_credentials_endpoint(
     body: Dict[str, Any],
     current_user: Dict[str, Any] = Depends(get_current_user_from_key)
 ) -> Dict[str, Any]:
-    """Updates API credentials for Dhan, Upstox, or Tapetide and saves them into the runtime environment."""
+    """Updates API credentials for Upstox or Tapetide and saves them into the runtime environment."""
     from app.services.broker_connectors import update_integration_credentials
     service = body.get("service", "")
     creds = body.get("credentials", {})
     return update_integration_credentials(service, creds)
+
 
 
 

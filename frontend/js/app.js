@@ -2638,13 +2638,6 @@ async function fetchIntegrationsStatus() {
             }
         }
 
-        // Dhan status
-        const dhanBadge = document.getElementById("modalDhanStatusBadge");
-        if (dhanBadge && data.dhan) {
-            dhanBadge.textContent = data.dhan.connected ? "CONFIGURED (LIVE)" : "DISCONNECTED";
-            dhanBadge.className = `stance-pill ${data.dhan.connected ? 'bull' : 'neutral'}`;
-        }
-
         // Upstox status
         const upstoxBadge = document.getElementById("modalUpstoxStatusBadge");
         if (upstoxBadge && data.upstox) {
@@ -2694,51 +2687,20 @@ async function saveTapetideToken() {
     }
 }
 
-async function saveDhanCredentials() {
-    const clientId = document.getElementById("inputDhanClientId")?.value.trim();
-    const token = document.getElementById("inputDhanToken")?.value.trim();
-    if (!clientId && !token) {
-        showToast("Enter Dhan Client ID and Access Token", "warning");
-        return;
-    }
-    try {
-        const creds = {};
-        if (clientId) creds.client_id = clientId;
-        if (token) creds.access_token = token;
-        const res = await authFetch(`${API_BASE}/api/integrations/credentials`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ service: "dhan", credentials: creds })
-        });
-        if (res.ok) {
-            showToast("Dhan credentials saved successfully", "success");
-            fetchIntegrationsStatus();
-        } else {
-            showToast("Failed to update Dhan credentials", "error");
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, "error");
-    }
-}
-
 async function saveUpstoxCredentials() {
-    const apiKey = document.getElementById("inputUpstoxApiKey")?.value.trim();
     const token = document.getElementById("inputUpstoxToken")?.value.trim();
-    if (!apiKey && !token) {
-        showToast("Enter Upstox API Key and Access Token", "warning");
+    if (!token) {
+        showToast("Enter Upstox Access Token", "warning");
         return;
     }
     try {
-        const creds = {};
-        if (apiKey) creds.api_key = apiKey;
-        if (token) creds.access_token = token;
         const res = await authFetch(`${API_BASE}/api/integrations/credentials`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ service: "upstox", credentials: creds })
+            body: JSON.stringify({ service: "upstox", credentials: { access_token: token } })
         });
         if (res.ok) {
-            showToast("Upstox credentials saved successfully", "success");
+            showToast("Upstox access token saved & active", "success");
             fetchIntegrationsStatus();
         } else {
             showToast("Failed to update Upstox credentials", "error");
@@ -2748,14 +2710,14 @@ async function saveUpstoxCredentials() {
     }
 }
 
-async function triggerBrokerSync(broker) {
+async function triggerBrokerSync(broker = "upstox") {
     const notifyEl = document.getElementById("brokerSyncNotification");
     if (notifyEl) {
         notifyEl.style.display = "block";
         notifyEl.style.background = "var(--bg-base)";
         notifyEl.style.color = "var(--text-secondary)";
         notifyEl.style.border = "1px solid var(--border-subtle)";
-        notifyEl.textContent = `Connecting to ${broker.toUpperCase()} Demat and reconciling holdings...`;
+        notifyEl.textContent = `Connecting to Upstox API v2 and retrieving demat holdings...`;
     }
     try {
         const res = await authFetch(`${API_BASE}/api/integrations/broker/sync?broker=${encodeURIComponent(broker)}`, {
@@ -2767,18 +2729,26 @@ async function triggerBrokerSync(broker) {
                 notifyEl.style.background = "var(--accent-mint-bg)";
                 notifyEl.style.color = "var(--accent-mint)";
                 notifyEl.style.border = "1px solid var(--accent-mint-border)";
-                notifyEl.textContent = `Sync Complete: Reconciled ${data.count} position(s) from ${broker.toUpperCase()} into FIFO ledger.`;
+                notifyEl.textContent = `Sync Complete: Reconciled ${data.count} position(s) from Upstox Demat into FIFO ledger.`;
             }
-            showToast(`Synchronized ${data.count} holding(s) from ${broker.toUpperCase()}`, "success");
+            showToast(`Synchronized ${data.count} holding(s) from Upstox`, "success");
             loadPortfolio();
+        } else if (data.status === "IP_WHITELIST_REQUIRED") {
+            if (notifyEl) {
+                notifyEl.style.background = "var(--accent-coral-bg)";
+                notifyEl.style.color = "var(--accent-coral)";
+                notifyEl.style.border = "1px solid var(--accent-coral-border)";
+                notifyEl.innerHTML = `<strong>Upstox IP Whitelist Alert (UDAPI1221):</strong> Your Upstox App has static IP protection enabled. Whitelist public IP <strong>${data.public_ip || '106.76.167.76'}</strong> in your Upstox Developer App console or clear the static IP field.`;
+            }
+            showToast(`Upstox: Add IP ${data.public_ip || '106.76.167.76'} in Upstox developer console`, "warning");
         } else {
             if (notifyEl) {
                 notifyEl.style.background = "var(--accent-coral-bg)";
                 notifyEl.style.color = "var(--accent-coral)";
                 notifyEl.style.border = "1px solid var(--accent-coral-border)";
-                notifyEl.textContent = `${broker.toUpperCase()} Sync Notice: ${data.message || 'Credentials required. Enter API keys above.'}`;
+                notifyEl.textContent = `Upstox Sync Notice: ${data.message || 'Credentials required. Enter API keys above.'}`;
             }
-            showToast(`Sync Failed: ${data.message || 'Credentials needed'}`, "warning");
+            showToast(`Sync Notice: ${data.message || 'Credentials needed'}`, "warning");
         }
     } catch (e) {
         if (notifyEl) {
@@ -2793,8 +2763,8 @@ async function triggerBrokerSync(broker) {
 window.openIntegrationsModal = openIntegrationsModal;
 window.closeIntegrationsModal = closeIntegrationsModal;
 window.saveTapetideToken = saveTapetideToken;
-window.saveDhanCredentials = saveDhanCredentials;
 window.saveUpstoxCredentials = saveUpstoxCredentials;
 window.triggerBrokerSync = triggerBrokerSync;
+
 
 
