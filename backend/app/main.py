@@ -40,12 +40,16 @@ from app.services.prediction_engine import (
 from app.services.fundamentals import get_company_fundamentals
 from app.services.corporate_actions import record_corporate_action, apply_pending_corporate_actions
 from app.services.historical_backtest import run_historical_backtest
+from app.services.historical_tester import get_available_test_dates, run_historical_test
 from app.services.email_dispatcher import dispatch_morning_report
 from app.services.portfolio import (
     record_transaction, compute_portfolio_fifo,
     delete_stock_from_portfolio, delete_transaction
 )
-from app.services.backtester import evaluate_pending_forecasts, get_forecast_scorecard
+from app.services.backtester import (
+    evaluate_pending_forecasts, get_forecast_scorecard,
+    delete_forecast_evaluation, delete_forecast_evaluations_by_symbol
+)
 from app.services.report_generator import generate_morning_report
 from app.services.scheduler import start_scheduler
 from app.services.tapetide_service import (
@@ -99,7 +103,14 @@ def serve_index():
     """Serve the Terminal Web Application index page."""
     index_file = FRONTEND_DIR / "index.html"
     if index_file.exists():
-        return FileResponse(str(index_file))
+        return FileResponse(
+            str(index_file),
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
     return {"message": "PredictaStock API Engine Running. Navigate to /docs for OpenAPI specs."}
 
 
@@ -125,10 +136,13 @@ def get_system_status() -> Dict[str, Any]:
 
 @app.get("/api/recommendations/today")
 def get_today_recommendations() -> List[Dict[str, Any]]:
-    """Retrieve today's 5-day stock recommendations with two-sided ATR volatility cones."""
-    recs = get_latest_recommendations(limit=5)
+    """Retrieve today's 5-day stock recommendations with two-sided ATR volatility cones.
+    Serves existing recommendations instantly without triggering a blocking 60-second universe scan."""
+    today_str = date.today().isoformat()
+    recs = get_latest_recommendations(limit=5, rec_date=today_str)
     if not recs:
-        recs = generate_daily_recommendations()
+        # Immediately return the latest active batch from the database (5ms response time)
+        recs = get_latest_recommendations(limit=5)
     return recs
 
 
@@ -166,6 +180,36 @@ def reset_and_rescan_recommendations() -> Dict[str, Any]:
 def get_screening_progress() -> Dict[str, Any]:
     """Retrieve real-time stock screening progress percentage and status."""
     return get_scan_progress()
+
+
+# ---------------------------------------------------------
+# HISTORICAL PREDICTION REALITY CHECK & BACKTEST SANDBOX
+# ---------------------------------------------------------
+@app.get("/api/historical-test/dates")
+def get_historical_test_dates_api() -> Dict[str, Any]:
+    """Retrieve available preset and recorded past dates for historical prediction testing."""
+    return get_available_test_dates()
+
+
+@app.post("/api/historical-test/run")
+def trigger_historical_test_api(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Run point-in-time prediction for a selected past date and compare with actual subsequent market outcomes.
+    """
+    target_date = payload.get("target_date")
+    if not target_date:
+        raise HTTPException(status_code=400, detail="Missing required field: target_date (YYYY-MM-DD)")
+    try:
+        force_recalc = payload.get("force_recalculate", True)
+        report = run_historical_test(target_date, force_recalculate=force_recalc)
+        return {
+            "status": "COMPLETED",
+            "report": report
+        }
+    except Exception as e:
+        logger.error(f"Error running historical prediction test for {target_date}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # ---------------------------------------------------------
@@ -636,7 +680,7 @@ def get_latest_backtest() -> Dict[str, Any]:
 @app.post("/api/backtest/run")
 def run_backtest_endpoint(
     lookback: str = Query("1y", pattern="^(3mo|6mo|1y|2y)$"),
-    friction: float = Query(0.15, ge=0.0, le=2.0)
+    friction: float = Query(0.30, ge=0.0, le=2.0)
 ) -> Dict[str, Any]:
     """Trigger a leakage-controlled historical backtesting simulation with realistic friction."""
     try:
@@ -702,6 +746,48 @@ def run_paper_trading_cycle_endpoint(cohort_id: Optional[str] = None) -> Dict[st
         return process_paper_trading_cycle(cohort_id=cohort_id or "COHORT-2026-v2.3")
     except Exception as e:
         logger.error(f"Paper trading cycle error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/paper-trading/recommendation/{rec_id}")
+def delete_paper_recommendation_endpoint(rec_id: str) -> Dict[str, Any]:
+    """Deletes an individual forward paper recommendation by its unique ID."""
+    try:
+        from app.services.paper_trader import delete_paper_recommendation
+        return delete_paper_recommendation(rec_id)
+    except Exception as e:
+        logger.error(f"Paper trading delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/paper-trading/stock/{symbol}")
+def delete_paper_stock_endpoint(symbol: str, cohort_id: Optional[str] = None) -> Dict[str, Any]:
+    """Deletes all forward paper recommendations for a given symbol."""
+    try:
+        from app.services.paper_trader import delete_paper_recommendations_by_symbol
+        return delete_paper_recommendations_by_symbol(symbol, cohort_id=cohort_id or "COHORT-2026-v2.3")
+    except Exception as e:
+        logger.error(f"Paper trading delete stock error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/scorecard/evaluation/{eval_id}")
+def delete_scorecard_evaluation_endpoint(eval_id: str) -> Dict[str, Any]:
+    """Deletes an individual completed forecast evaluation record by ID."""
+    try:
+        return delete_forecast_evaluation(eval_id)
+    except Exception as e:
+        logger.error(f"Scorecard delete evaluation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/scorecard/stock/{symbol}")
+def delete_scorecard_stock_endpoint(symbol: str) -> Dict[str, Any]:
+    """Deletes all completed forecast evaluations for a specific symbol."""
+    try:
+        return delete_forecast_evaluations_by_symbol(symbol)
+    except Exception as e:
+        logger.error(f"Scorecard delete stock error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

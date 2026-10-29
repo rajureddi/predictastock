@@ -196,14 +196,17 @@ def get_dynamic_bhavcopy_universe(
         min_turnover_lacs = min_turnover_cr * 100.0  # ₹10 Cr = 1000 Lakhs
 
         # -------------------------------------------------------------
-        # SLEEVE 1: Top Liquid Market Leaders
+        # SLEEVE 1: Top Liquid Market Leaders (Equities Only - Exclude ETFs)
         # -------------------------------------------------------------
+        ETF_EXCLUDES = {"LIQUIDCASE", "LIQUIDBEES", "NIFTYBEES", "BANKBEES", "GOLDBEES", "SILVERBEES", "MON100", "CPSEETF", "JUNIORBEES"}
         sleeve_1_candidates = []
         for s in base_stocks:
             turnover = s.get('turnover_lacs', 0.0)
             price = s.get('close_price', 0.0)
             if turnover >= min_turnover_lacs and price >= min_price:
                 sym = s['symbol']
+                if sym.endswith("BEES") or sym.endswith("ETF") or sym.endswith("CASE") or sym in ETF_EXCLUDES:
+                    continue
                 info = get_symbol_info(sym)
                 sleeve_1_candidates.append({
                     "symbol": sym,
@@ -225,7 +228,7 @@ def get_dynamic_bhavcopy_universe(
         sleeve_2_candidates = []
         for s in base_stocks:
             sym = s['symbol']
-            if sym in seen_symbols:
+            if sym in seen_symbols or sym.endswith("BEES") or sym.endswith("ETF") or sym.endswith("CASE") or sym in ETF_EXCLUDES:
                 continue
 
             price = s.get('close_price', 0.0)

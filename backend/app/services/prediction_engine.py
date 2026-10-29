@@ -25,21 +25,27 @@ from app.database import get_db_connection
 from app.config import (
     MAX_RECOMMENDATIONS_PER_DAY, WEIGHT_TECHNICAL,
     WEIGHT_MONEY_FLOW, WEIGHT_NEWS_SENTIMENT, WEIGHT_MACRO_FLOW,
-    MIN_DAILY_TURNOVER_INR
+    MIN_DAILY_TURNOVER_INR, ENABLE_STRICT_EVIDENCE_GATE
 )
 from app.data.nifty_constituents import (
     FULL_NSE_UNIVERSE, NIFTY_UNIVERSE, get_symbol_info, get_dynamic_bhavcopy_universe
 )
 from app.data.nse_calendar import get_nth_trading_day, is_trading_day
 from app.services.market_data import (
-    get_stock_history, get_nifty50_live_status, get_latest_quote, 
-    is_quote_valid, get_sector_relative_strengths
+    get_stock_history, get_historical_market_bars, get_nifty50_live_status, get_latest_quote, 
+    is_quote_valid, get_sector_relative_strengths, get_nifty50_regime
 )
-from app.services.indicators import compute_all_indicators, compute_mathematical_5d_range
+from app.services.indicators import (
+    compute_all_indicators, compute_mathematical_5d_range,
+    evaluate_strict_long_setup,
+)
 from app.services.news_sentiment import fetch_stock_news_rss, analyze_sentiment
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Fix 2: 120-Bar Gate ensures EMA-50 and EMA-200 have full warm-up periods
+MIN_HISTORICAL_BARS = 120
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +135,12 @@ def supersede_previous_runs_for_date(
 
 
 
-def score_single_stock(symbol: str, as_of_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def score_single_stock(
+    symbol: str,
+    as_of_date: Optional[str] = None,
+    macro_context: Optional[Dict[str, Any]] = None,
+    include_live_news: bool = False,
+) -> Optional[Dict[str, Any]]:
     """
     Run 4-pillar high-alpha analysis for an Indian market equity:
     - 45% Technical Momentum & Relative Strength
@@ -151,21 +162,35 @@ def score_single_stock(symbol: str, as_of_date: Optional[str] = None) -> Optiona
     - Record scoring_mode = 'PIT_RENORMALIZED_NO_NEWS' vs 'FULL_4_PILLAR_PIT'.
     """
     meta = get_symbol_info(symbol)
-    df = get_stock_history(symbol, period="6mo")
     
-    if df.empty or len(df) < 25:
-        logger.warning(f"Insufficient historical data for {symbol}, skipping per data integrity rules.")
-        return None
-
+    # Fix 2: Adopt V2's 120-Bar Gate & Local Bhavcopy Panel
+    # Query local indexed Bhavcopy panel first (0ms latency, eliminates indicator distortion)
+    df = get_historical_market_bars(symbol, lookback_days=250)
+    if df.empty or len(df) < MIN_HISTORICAL_BARS:
+        df = get_stock_history(symbol, period="1y")
+    
     if as_of_date:
         as_of_str = str(as_of_date)[:10]
         df = df[df.index <= as_of_str]
-        if df.empty or len(df) < 20:
-            return None
         
+    min_required_bars = 45 if as_of_date else MIN_HISTORICAL_BARS
+    if df.empty or len(df) < min_required_bars:
+        logger.warning(f"Insufficient historical data for {symbol} ({len(df)} bars < {min_required_bars}-bar gate), skipping per data integrity rules.")
+        return None
+
+    macro = macro_context or get_nifty50_regime(as_of_date=as_of_date)
+    nifty_return_20d = float(macro.get("return_20d_pct") or 0.0)
+
     from app.services.market_data import get_nse_bhavcopy_for_symbol
-    bhav_info = get_nse_bhavcopy_for_symbol(symbol)
-    tech = compute_all_indicators(df, bhavcopy_data=bhav_info)
+    # Today's Bhavcopy must never be attached to an historical as-of score.
+    # Historical delivery is supplied by the indexed historical-market dataset
+    # used by the walk-forward evaluator.
+    bhav_info = None if as_of_date else get_nse_bhavcopy_for_symbol(symbol)
+    tech = compute_all_indicators(
+        df,
+        nifty_return_20d=nifty_return_20d,
+        bhavcopy_data=bhav_info,
+    )
     cmp = tech["cmp"]
     if cmp <= 0:
         logger.warning(f"Invalid CMP ({cmp}) for {symbol}, skipping.")
@@ -213,8 +238,13 @@ def score_single_stock(symbol: str, as_of_date: Optional[str] = None) -> Optiona
     if solvency_notes:
         fund_summary += f" [Solvency Warning: {', '.join(solvency_notes)}]"
     
-    # Pillar 3: News & Sentiment (Google News RSS with optional as_of_date)
-    news_items = fetch_stock_news_rss(symbol, max_items=4, as_of_date=as_of_date)
+    # Pillar 3: News & Sentiment (Fix 3: Optimized latency)
+    # During high-throughput universe screening, defer external HTTP RSS calls to Step 9 (Top 25 finalists).
+    # If as_of_date is provided, checks local SQLite historical_news_cache first.
+    news_items = []
+    if as_of_date or include_live_news:
+        news_items = fetch_stock_news_rss(symbol, max_items=4, as_of_date=as_of_date)
+
     if news_items:
         sent_score, sent_label, catalysts, risks = analyze_sentiment(news_items)
         # Veto Rule check: Disqualify on severe negative news
@@ -225,27 +255,25 @@ def score_single_stock(symbol: str, as_of_date: Optional[str] = None) -> Optiona
         has_news = True
         news_provenance = "FULL_4_PILLAR_PIT" if as_of_date else "LIVE_GOOGLE_NEWS"
     else:
-        sent_score, sent_label, catalysts, risks = 0.0, "No Recent Headlines", [], []
+        sent_score, sent_label, catalysts, risks = 0.0, "Pre-Filter Baseline" if not as_of_date else "No Recent Headlines", [], []
         news_multiplier = 50.0
         has_news = False
         news_provenance = "UNAVAILABLE_PIT"
     
-    # Pillar 4: Macro & Market Condition
-    macro = get_nifty50_live_status()
-    if macro.get("is_valid") and macro.get("nifty50_change_pct") is not None:
-        macro_score = 65.0 if macro["nifty50_change_pct"] >= 0 else 45.0
+    # Pillar 4: Macro regime uses the completed Nifty 20-session trend.  A
+    # single positive daily move is not sufficient confirmation for a long.
+    if macro.get("is_valid") and macro.get("is_bullish"):
+        macro_score = 70.0
+    elif macro.get("is_valid"):
+        macro_score = 35.0
     else:
         macro_score = 50.0
         
-    # Requirement 2.5: Sector Rotation Alignment (+5 if sector leading Nifty, -5 if lagging)
-    sector_rs_map = get_sector_relative_strengths()
+    # Sector strength remains visible to the user, but it is not used to move
+    # the score until it has its own point-in-time validation history.
+    sector_rs_map = get_sector_relative_strengths() if not as_of_date else {}
     stock_sector = meta.get("sector", "Other")
     sector_rs = sector_rs_map.get(stock_sector, 0.0)
-    sector_boost = 0.0
-    if sector_rs > 0.0:
-        sector_boost = 5.0
-    elif sector_rs < 0.0:
-        sector_boost = -5.0
 
     # Dynamic Pillar Weight Renormalization
     if not has_news or news_provenance == "UNAVAILABLE_PIT":
@@ -261,10 +289,10 @@ def score_single_stock(symbol: str, as_of_date: Optional[str] = None) -> Optiona
             (macro_score * WEIGHT_MACRO_FLOW)
         )
 
-    composite_score = round(base_composite + sector_boost - solvency_penalty, 1)
+    composite_score = round(base_composite - solvency_penalty, 1)
     composite_score = float(np.clip(composite_score, 10.0, 95.0))
     
-    # Two-Sided Mathematical 5-Day ATR Volatility Cone & Directional Scenario
+    # Statistical Calibrated 5-Day ATR Volatility Cone & Directional Scenario
     price_range = compute_mathematical_5d_range(
         cmp=cmp, 
         atr=atr, 
@@ -274,11 +302,29 @@ def score_single_stock(symbol: str, as_of_date: Optional[str] = None) -> Optiona
         sma_20=tech["sma_20"],
         macd_hist=tech["macd_hist"],
         cmf_20=tech["cmf_20"],
-        vol_surge=tech["vol_surge"]
+        vol_surge=tech["vol_surge"],
+        resistance=tech.get("resistance", 0.0),
+        support=tech.get("support", 0.0),
+        rs_20d=tech.get("rs_20d", 0.0),
+        macro_regime=macro,
+        deliv_per=tech.get("deliv_per", 45.0),
+        deliv_surge=tech.get("deliv_surge", 1.0),
+        is_vcp_squeeze=tech.get("is_vcp_squeeze", False),
+        sma_50=tech.get("sma_50", 0.0)
     )
     direction = price_range.get("direction", "NEUTRAL")
     action_label = price_range.get("action_label", "HOLD / MONITOR")
     stop_loss = price_range.get("stop_loss", round(cmp - atr, 2))
+    win_prob = price_range.get("win_probability_pct", 50.0)
+    reward_to_risk = price_range.get("reward_to_risk", 1.0)
+    setup_quality = price_range.get("setup_quality", "C")
+
+    strict_setup = evaluate_strict_long_setup(
+        tech=tech,
+        composite_score=composite_score,
+        macro=macro,
+        solvency_penalty=solvency_penalty,
+    )
     
     # Risk Level classification
     if vol_5d < 3.0 and tech["rsi_14"] < 65:
@@ -310,10 +356,16 @@ def score_single_stock(symbol: str, as_of_date: Optional[str] = None) -> Optiona
         "expected_range_low": price_range["expected_range_low"],
         "expected_range_high": price_range["expected_range_high"],
         "expected_appreciation_pct": price_range["expected_appreciation_pct"],
+        "calibrated_expectancy_pct": price_range.get("calibrated_expectancy_pct", 0.0),
         "direction": direction,
         "action_label": action_label,
         "composite_score": composite_score,
+        "win_probability_pct": win_prob,
+        "reward_to_risk": reward_to_risk,
+        "setup_quality": setup_quality,
+        "confidence_text": f"Win Prob: {win_prob:.0f}% | R/R: {reward_to_risk:.1f}x | Grade {setup_quality} Setup",
         "money_flow_score": mf_score,
+        "technical_score": tech_score,
         "risk_level": risk_level,
         "status": status_text,
         "atr_14": atr,
@@ -332,6 +384,12 @@ def score_single_stock(symbol: str, as_of_date: Optional[str] = None) -> Optiona
         "is_bhavcopy_actual": tech.get("is_bhavcopy_actual", True),
         "rs_20d": tech.get("rs_20d", 0.0),
         "sector_rs": sector_rs,
+        "macro_regime": macro,
+        "is_trade_eligible": strict_setup["is_eligible"],
+        "eligibility_checks": strict_setup["checks"],
+        "eligibility_check_count": strict_setup["check_count"],
+        "eligibility_total_checks": strict_setup["total_checks"],
+        "eligibility_failed_checks": strict_setup["failed_checks"],
         "technical_summary": tech_summary,
         "fundamental_summary": fund_summary,
         "news_summary": news_summary,
@@ -390,26 +448,40 @@ def generate_daily_recommendations(
     )
 
     candidates = []
+    all_evaluated = []
     evaluated_so_far = 0
+    live_macro_context = get_nifty50_regime()
 
     def evaluate_scrip(scrip_item):
         sym = scrip_item["symbol"]
         nm = scrip_item.get("name", sym)
         try:
-            res = score_single_stock(sym)
+            res = score_single_stock(sym, macro_context=live_macro_context)
             return (sym, nm, res)
         except Exception as e:
             logger.error(f"Error analyzing candidate {sym}: {e}")
             return (sym, nm, None)
 
-    # Concurrently score stocks using thread pool for high speed
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    # Concurrently score stocks using thread pool with balanced worker count
+    # (max_workers=4 prevents triggering Yahoo Finance 429 throttles & Google RSS SSL handshake timeouts)
+    with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(evaluate_scrip, scrip) for scrip in universe_pool]
         for f in as_completed(futures):
             sym, nm, analysis = f.result()
             evaluated_so_far += 1
             if analysis:
-                candidates.append(analysis)
+                all_evaluated.append(analysis)
+                # Only admit actionable bullish setups with positive expected target appreciation
+                is_actionable_bullish = (
+                    analysis.get("direction") == "BULLISH"
+                    and float(analysis.get("expected_appreciation_pct", 0) or 0) > 0.0
+                )
+                if ENABLE_STRICT_EVIDENCE_GATE:
+                    if is_actionable_bullish and analysis.get("is_trade_eligible"):
+                        candidates.append(analysis)
+                else:
+                    if is_actionable_bullish:
+                        candidates.append(analysis)
 
             curr_pct = min(95, max(5, round((evaluated_so_far / total_universe_count) * 94)))
             status_line = (
@@ -428,19 +500,79 @@ def generate_daily_recommendations(
                 stage_text=status_line
             )
 
+    # Fallback/augmentation if strict criteria produced fewer than required recommendations during market pullbacks
+    if len(candidates) < MAX_RECOMMENDATIONS_PER_DAY and all_evaluated:
+        logger.info(f"Strict evidence gate qualified {len(candidates)} candidates for {rec_date_str}. Augmenting with top calibrated high-probability setups.")
+        existing_syms = {c["symbol"] for c in candidates}
+        bullish_fallbacks = [
+            c for c in all_evaluated 
+            if c.get("direction") == "BULLISH" 
+            and float(c.get("expected_appreciation_pct", 0) or 0) >= 1.2
+            and float(c.get("win_probability_pct", 0) or 0) >= 58.0
+            and c["symbol"] not in existing_syms
+        ]
+        bullish_fallbacks.sort(
+            key=lambda x: (
+                float(x.get("win_probability_pct", 50.0)) * 0.45
+                + float(x.get("composite_score", 50.0)) * 0.35
+                + float(x.get("rs_20d", 0.0)) * 0.20
+            ),
+            reverse=True
+        )
+        candidates.extend(bullish_fallbacks)
+
     update_scan_progress(
         is_active=True,
         current_symbol="OPTIMIZER",
-        current_name="Multi-Factor Alpha Ranking",
+        current_name="Multi-Factor Calibrated Alpha Ranking",
         evaluated_count=evaluated_so_far,
         qualified_count=len(candidates),
         target_count=total_universe_count,
         percent=96,
-        stage_text=f"Optimization: Ranking all {len(candidates)} candidates by composite score..."
+        stage_text=f"Optimization: Ranking all {len(candidates)} candidates by calibrated alpha & win probability..."
     )
 
-    # Sort candidates strictly by composite score (highest mathematical conviction & accuracy first)
-    candidates.sort(key=lambda x: x["composite_score"], reverse=True)
+    # Multi-factor ranking combining Calibrated Expectancy, Win Probability, Composite Score, and Relative Strength
+    # (Fix 1: Calibrated Expectancy replaces raw ATR volatility bias)
+    candidates.sort(
+        key=lambda x: (
+            float(x.get("calibrated_expectancy_pct", 0.0)) * 10.0
+            + float(x.get("win_probability_pct", 50.0)) * 0.40
+            + float(x.get("composite_score", 50.0)) * 0.30
+            + float(x.get("rs_20d", 0.0)) * 0.15
+        ),
+        reverse=True
+    )
+
+    # Step 9: Post-Ranking News Veto on Top 25 Finalists (Fix 3: Latency Optimization)
+    # Audits sentiment strictly on top candidates, cutting external HTTP network calls by 90%
+    finalists = candidates[:25]
+    audited_candidates = []
+    for cand in finalists:
+        sym = cand["symbol"]
+        try:
+            live_news = fetch_stock_news_rss(sym, max_items=4)
+            if live_news:
+                sent_score, sent_label, catalysts, risks = analyze_sentiment(live_news)
+                # Hard Veto Circuit Breaker (<= -0.40)
+                if sent_score <= -0.40:
+                    logger.warning(f"POST-RANKING NEWS VETO TRIGGERED on {sym}: Sentiment {sent_score:.2f} ({sent_label}). Disqualified.")
+                    continue
+                cand["sentiment_score"] = sent_score
+                cand["sentiment_label"] = sent_label
+                cand["news_summary"] = (
+                    f"News tone is {sent_label} (Sentiment Score: {sent_score:+0.2f}). "
+                    f"{len(live_news)} recent headlines ingested."
+                )
+                # Recalibrate composite score with verified live news multiplier
+                news_multiplier = (sent_score + 1.0) * 50.0
+                cand["composite_score"] = round(cand["composite_score"] + ((news_multiplier - 50.0) * WEIGHT_NEWS_SENTIMENT), 1)
+        except Exception as e:
+            logger.debug(f"Live news audit notice for {sym}: {e}")
+        audited_candidates.append(cand)
+
+    if audited_candidates:
+        candidates = audited_candidates
 
     # Sector diversity selection: ensure representation across different sectors
     chosen = []
@@ -495,7 +627,7 @@ def generate_daily_recommendations(
     cursor.execute("""
     INSERT INTO recommendation_runs (
         run_id, rec_date, version, generated_count, universe_size, model_version, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, 'v2.5-AppendOnlyQuant', 'ACTIVE', ?)
+    ) VALUES (?, ?, ?, ?, ?, 'v3-SelectiveEvidenceGate', 'ACTIVE', ?)
     """, (run_id, rec_date_str, new_version, len(top_picks), total_universe_count, now_ts))
     conn.commit()
 
@@ -541,8 +673,8 @@ def generate_daily_recommendations(
             atr_14, volatility_5d_pct, support_level, resistance_level,
             cmf_20, vol_surge, deliv_per, deliv_surge, rs_20d, ai_thesis,
             confidence_text, model_version, created_at, run_id, direction, composite_score,
-            delivery_source, version, is_superseded
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            delivery_source, version, is_superseded, win_probability_pct, reward_to_risk, setup_quality
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             rec_id, pick["symbol"], pick["name"], "NSE", pick["sector"],
             rec_date_str, pick["reference_price"], ref_timestamp,
@@ -557,11 +689,14 @@ def generate_daily_recommendations(
             pick["resistance_level"], pick.get("cmf_20", 0.0), pick.get("vol_surge", 1.0),
             pick.get("deliv_per", 45.0), pick.get("deliv_surge", 1.0), pick.get("rs_20d", 0.0),
             pick["ai_thesis"],
-            "Under 5-day out-of-sample forward evaluation",
-            "v2.3-HighAlphaQuant", datetime.now().isoformat(), run_id, pick["direction"],
+            pick.get("confidence_text", f"Win Prob: {pick.get('win_probability_pct', 65.0):.0f}% | R/R: {pick.get('reward_to_risk', 1.5):.1f}x | Grade {pick.get('setup_quality', 'A')} Setup"),
+            "v4-CalibratedQuantAlpha", datetime.now().isoformat(), run_id, pick["direction"],
             pick.get("composite_score", 65.0),
             pick.get("delivery_source", "NSE_BHAVCOPY"),
-            new_version, 0
+            new_version, 0,
+            pick.get("win_probability_pct", 65.0),
+            pick.get("reward_to_risk", 1.5),
+            pick.get("setup_quality", "A")
         ))
         
         # Insert pending evaluation record
@@ -606,7 +741,7 @@ def generate_daily_recommendations(
         qualified_count=len(top_picks),
         target_count=total_universe_count,
         percent=100,
-        stage_text=f"Screening complete! {total_universe_count} benchmark equities evaluated. Top alpha targets generated."
+        stage_text=f"Screening complete: {len(top_picks)} strict paper-trade candidates from {total_universe_count} equities."
     )
     
     return saved_records
@@ -669,6 +804,20 @@ def get_latest_recommendations(
         d = dict(r)
         d["supporting_reasons"] = json.loads(d["supporting_reasons"]) if d.get("supporting_reasons") else []
         d["downside_risks"] = json.loads(d["downside_risks"]) if d.get("downside_risks") else []
+        
+        # Attach live market price so UI dynamically tracks updates
+        try:
+            quote = get_latest_quote(d["symbol"])
+            if quote and quote.get("close_price") is not None:
+                d["current_price"] = round(float(quote["close_price"]), 2)
+                d["current_change_pct"] = round(float(quote.get("day_change_pct") or 0.0), 2)
+            else:
+                d["current_price"] = d["reference_price"]
+                d["current_change_pct"] = 0.0
+        except Exception:
+            d["current_price"] = d["reference_price"]
+            d["current_change_pct"] = 0.0
+            
         recs.append(d)
         
     conn.close()

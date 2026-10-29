@@ -33,11 +33,14 @@ import logging
 
 from app.config import (
     REPORTS_DIR, BASE_DIR, ROUNDTRIP_FRICTION_PCT,
-    TIER1_MIN_COMPOSITE_SCORE, TIER1_MIN_DELIVERY_SURGE, TIER1_MIN_CMF
+    VALIDATION_MIN_OUT_OF_SAMPLE_TRADES, VALIDATION_TARGET_HIT_RATE_PCT,
 )
 from app.data.nifty_constituents import NIFTY_UNIVERSE
 from app.database import get_db_connection
-from app.services.indicators import compute_all_indicators, compute_mathematical_5d_range
+from app.services.indicators import (
+    compute_all_indicators, compute_mathematical_5d_range,
+    evaluate_strict_long_setup,
+)
 from app.services.market_data import get_historical_market_bars
 from app.services.fundamentals import get_point_in_time_fundamentals
 from app.services.news_sentiment import fetch_stock_news_rss, analyze_sentiment
@@ -423,10 +426,6 @@ def run_historical_backtest(
     val_baseline_trades = []
     oos_baseline_trades = []
 
-    dev_tier1_trades = []
-    val_tier1_trades = []
-    oos_tier1_trades = []
-
     baseline_nifty_trades = []
     baseline_trend_trades = []
     baseline_no_change_trades = []
@@ -496,17 +495,40 @@ def run_historical_backtest(
 
                 # Benchmark Nifty return over exact period
                 nifty_slice = nifty_df[(nifty_df.index >= pit_df.index[-1]) & (nifty_df.index <= future_bars.index[-1])]
+                nifty_at_t0 = nifty_df[nifty_df.index <= pit_df.index[-1]]
                 if len(nifty_slice) >= 2:
                     nifty_start = float(nifty_slice['Close'].iloc[0])
                     nifty_end = float(nifty_slice['Close'].iloc[-1])
                     nifty_return_pct = ((nifty_end - nifty_start) / nifty_start) * 100.0
-                    nifty_above_20dma = bool(nifty_start >= float(nifty_slice['SMA_20'].iloc[0]))
                 else:
                     nifty_return_pct = 0.0
-                    nifty_above_20dma = True
+
+                if len(nifty_at_t0) >= 20:
+                    nifty_close_t0 = float(nifty_at_t0["Close"].iloc[-1])
+                    nifty_return_20d = float(
+                        ((nifty_close_t0 - float(nifty_at_t0["Close"].iloc[-20])) /
+                         float(nifty_at_t0["Close"].iloc[-20])) * 100.0
+                    )
+                    macro_context = {
+                        "is_valid": True,
+                        "is_bullish": bool(
+                            nifty_close_t0 >= float(nifty_at_t0["SMA_20"].iloc[-1])
+                            and nifty_return_20d >= 0.0
+                        ),
+                        "return_20d_pct": nifty_return_20d,
+                    }
+                else:
+                    macro_context = {
+                        "is_valid": False,
+                        "is_bullish": False,
+                        "return_20d_pct": 0.0,
+                    }
 
                 # Compute technicals at date T0
-                tech = compute_all_indicators(pit_df)
+                tech = compute_all_indicators(
+                    pit_df,
+                    nifty_return_20d=float(macro_context["return_20d_pct"]),
+                )
                 atr_14 = tech["atr_14"]
                 vol_5d = tech["volatility_5d_pct"]
                 cmf_20 = tech["cmf_20"]
@@ -528,7 +550,8 @@ def run_historical_backtest(
                     news_multiplier = (sent_score + 1.0) * 50.0
                     news_provenance = "FULL_4_PILLAR_PIT"
                     scoring_mode = "FULL_4_PILLAR_PIT"
-                    base_composite = (tech["technical_score"] * 0.45 + tech["money_flow_score"] * 0.25 + news_multiplier * 0.20 + 50.0 * 0.10)
+                    macro_score = 70.0 if macro_context["is_bullish"] else (35.0 if macro_context["is_valid"] else 50.0)
+                    base_composite = (tech["technical_score"] * 0.45 + tech["money_flow_score"] * 0.25 + news_multiplier * 0.20 + macro_score * 0.10)
                 else:
                     news_provenance = "UNAVAILABLE_PIT"
                     scoring_mode = "PIT_RENORMALIZED_NO_NEWS"
@@ -536,9 +559,16 @@ def run_historical_backtest(
                     # Tech = 0.45 / 0.80 = 56.25%
                     # MoneyFlow = 0.25 / 0.80 = 31.25%
                     # Macro = 0.10 / 0.80 = 12.50%
-                    base_composite = (tech["technical_score"] * 0.45 + tech["money_flow_score"] * 0.25 + 50.0 * 0.10) / 0.80
+                    macro_score = 70.0 if macro_context["is_bullish"] else (35.0 if macro_context["is_valid"] else 50.0)
+                    base_composite = (tech["technical_score"] * 0.45 + tech["money_flow_score"] * 0.25 + macro_score * 0.10) / 0.80
 
                 composite_score = round(base_composite - solvency_penalty, 1)
+                strict_setup = evaluate_strict_long_setup(
+                    tech=tech,
+                    composite_score=composite_score,
+                    macro=macro_context,
+                    solvency_penalty=solvency_penalty,
+                )
 
                 range_data = compute_mathematical_5d_range(
                     cmp=close_t0,
@@ -555,8 +585,10 @@ def run_historical_backtest(
                 planned_target = range_data["expected_target_price"]
                 planned_stop = range_data["stop_loss"]
 
-                # Indian Cash Market Rule: BEARISH/NEUTRAL signals take 0 positions
-                if pred_dir != "BULLISH":
+                # The historical evaluator measures the exact long-only gate
+                # used by live screening.  Any failed confirmation is an
+                # abstention, never a trade with a weaker label.
+                if pred_dir != "BULLISH" or not strict_setup["is_eligible"]:
                     # Record for naive baseline comparisons
                     baseline_no_change_trades.append(1 if abs(((close_t1 - close_t0) / close_t0) * 100.0) <= 1.0 else 0)
                     baseline_nifty_trades.append(nifty_return_pct)
@@ -643,23 +675,6 @@ def run_historical_backtest(
                 else:
                     oos_baseline_trades.append(trade_record)
 
-                # Tier-1 Candidate Rules:
-                # Composite >= 78, CMF-20 >= 0.12, Verified NSE Delivery Surge >= 1.8x, Nifty > 20-DMA
-                is_tier1 = (
-                    composite_score >= TIER1_MIN_COMPOSITE_SCORE and
-                    cmf_20 >= TIER1_MIN_CMF and
-                    (deliv_surge >= TIER1_MIN_DELIVERY_SURGE and is_actual_deliv) and
-                    nifty_above_20dma
-                )
-
-                if is_tier1:
-                    if cohort_type == "DEV":
-                        dev_tier1_trades.append(trade_record)
-                    elif cohort_type == "VAL":
-                        val_tier1_trades.append(trade_record)
-                    else:
-                        oos_tier1_trades.append(trade_record)
-
                 # Baseline metrics
                 actual_5d_close = float(future_bars['Close'].iloc[-1])
                 simple_actual_return_pct = ((actual_5d_close - actual_entry_price) / actual_entry_price) * 100.0
@@ -681,11 +696,6 @@ def run_historical_backtest(
     val_baseline_metrics = evaluate_trade_cohort(val_baseline_trades, "Validation_20%", total_evaluated_sessions, total_rejections, rejections_summary)
     oos_baseline_metrics = evaluate_trade_cohort(oos_baseline_trades, "Untouched_FinalTest_30%", total_evaluated_sessions, total_rejections, rejections_summary)
 
-    # Evaluate 3 Cohorts for Proposed Tier-1 Rules
-    dev_tier1_metrics = evaluate_trade_cohort(dev_tier1_trades, "Tier1_Development_50%")
-    val_tier1_metrics = evaluate_trade_cohort(val_tier1_trades, "Tier1_Validation_20%")
-    oos_tier1_metrics = evaluate_trade_cohort(oos_tier1_trades, "Tier1_Untouched_Test_30%")
-
     # Compounded Portfolio Ledger Simulation on Untouched Test Cohort
     test_portfolio_sim = run_compounded_portfolio_simulation(oos_baseline_trades, initial_capital=1000000.0, max_positions=5)
 
@@ -700,28 +710,36 @@ def run_historical_backtest(
     trend_avg_net = round(float(np.mean([t["net_ret"] for t in baseline_trend_trades])), 2) if baseline_trend_trades else 0.0
     no_change_acc = round((sum(baseline_no_change_trades) / max(1, len(baseline_no_change_trades))) * 100.0, 1) if baseline_no_change_trades else 0.0
 
-    # Formal Hypothesis Evidence Verdict
-    n_tier1_oos = oos_tier1_metrics["sample_size"]
-    tier1_net_ret_oos = oos_tier1_metrics["avg_net_return_pct"]
+    # Model-release gate.  A high hit-rate label is permitted only after the
+    # separate, untouched cohort has both enough observations and positive
+    # results after realistic friction.
+    oos_sample_size = oos_baseline_metrics["sample_size"]
+    oos_hit_rate = oos_baseline_metrics["directional_hit_rate_pct"]
+    oos_avg_net = oos_baseline_metrics["avg_net_return_pct"]
+    oos_nifty_avg = round(float(np.mean([t["nifty_ret"] for t in oos_baseline_trades])), 2) if oos_baseline_trades else 0.0
+    oos_alpha = round(oos_avg_net - oos_nifty_avg, 2)
+    release_passed = bool(
+        oos_sample_size >= VALIDATION_MIN_OUT_OF_SAMPLE_TRADES
+        and oos_hit_rate >= VALIDATION_TARGET_HIT_RATE_PCT
+        and oos_avg_net > 0.0
+        and oos_alpha > 0.0
+    )
+    evidence_verdict = "80% VALIDATED" if release_passed else "PAPER-TRADE ONLY"
+    verdict_explanation = (
+        f"The strict evidence gate met the release requirement: {oos_hit_rate:.1f}% hit rate across "
+        f"N={oos_sample_size} untouched trades with {oos_avg_net:+.2f}% average net return and "
+        f"{oos_alpha:+.2f}% alpha versus Nifty."
+        if release_passed else
+        f"The strict evidence gate remains paper-trade only. It needs at least "
+        f"{VALIDATION_MIN_OUT_OF_SAMPLE_TRADES} untouched trades, {VALIDATION_TARGET_HIT_RATE_PCT:.0f}% hit rate, "
+        f"positive net return, and positive Nifty alpha. Current untouched result: N={oos_sample_size}, "
+        f"hit rate {oos_hit_rate:.1f}%, net return {oos_avg_net:+.2f}%, alpha {oos_alpha:+.2f}%."
+    )
 
-    if n_tier1_oos >= 15 and tier1_net_ret_oos > 0 and tier1_net_ret_oos > oos_baseline_metrics["avg_net_return_pct"]:
-        evidence_verdict = "POSITIVE EVIDENCE"
-        verdict_explanation = f"Tier-1 Rules demonstrated positive out-of-sample net returns ({tier1_net_ret_oos:+.2f}%) across N={n_tier1_oos} trades."
-    elif n_tier1_oos >= 15 and tier1_net_ret_oos <= 0:
-        evidence_verdict = "NEGATIVE EVIDENCE"
-        verdict_explanation = f"Tier-1 Rules yielded negative or flat returns ({tier1_net_ret_oos:+.2f}%) out of sample across N={n_tier1_oos} trades."
-    else:
-        evidence_verdict = "INSUFFICIENT EVIDENCE"
-        verdict_explanation = (
-            f"Insufficient verified Bhavcopy trades in Untouched Test (N={n_tier1_oos} < 15 threshold). "
-            f"The candidate rules (Composite>=78, CMF>=0.12, Deliv Surge>=1.8x, Nifty>20-DMA) are highly restrictive. "
-            f"System honestly reports insufficient sample size rather than fabricating unverified alpha claims."
-        )
-
-    bull_trades = [t for t in all_baseline_trades if t.get("nifty_return_pct", 0) >= 0]
-    bear_trades = [t for t in all_baseline_trades if t.get("nifty_return_pct", 0) < 0]
-    bull_hit_rate = round(sum(1 for t in bull_trades if t.get("net_return_pct", 0) > 0) / len(bull_trades) * 100, 2) if bull_trades else 50.0
-    bear_hit_rate = round(sum(1 for t in bear_trades if t.get("net_return_pct", 0) > 0) / len(bear_trades) * 100, 2) if bear_trades else 50.0
+    bull_trades = [t for t in all_baseline_trades if t.get("nifty_ret", 0) >= 0]
+    bear_trades = [t for t in all_baseline_trades if t.get("nifty_ret", 0) < 0]
+    bull_hit_rate = round(sum(1 for t in bull_trades if t.get("net_ret", 0) > 0) / len(bull_trades) * 100, 2) if bull_trades else 0.0
+    bear_hit_rate = round(sum(1 for t in bear_trades if t.get("net_ret", 0) > 0) / len(bear_trades) * 100, 2) if bear_trades else 0.0
 
     model_perf = {
         "directional_hit_rate_pct": all_metrics["directional_hit_rate_pct"],
@@ -730,7 +748,8 @@ def run_historical_backtest(
         "win_loss_ratio": all_metrics["win_loss_ratio"],
         "max_drawdown_pct": test_portfolio_sim.get("max_drawdown_pct", 0.0),
         "bull_market_hit_rate_pct": bull_hit_rate,
-        "bear_market_hit_rate_pct": bear_hit_rate
+        "bear_market_hit_rate_pct": bear_hit_rate,
+        "release_status": evidence_verdict,
     }
 
     results = {
@@ -752,12 +771,18 @@ def run_historical_backtest(
         "in_sample_dev_metrics": dev_baseline_metrics,
         "validation_metrics": val_baseline_metrics,
         "out_of_sample_test_metrics": oos_baseline_metrics,
-        "tier1_candidate_rules": {
-            "in_sample_dev": dev_tier1_metrics,
-            "validation": val_tier1_metrics,
-            "out_of_sample_test": oos_tier1_metrics,
+        "strict_evidence_gate": {
+            "in_sample_dev": dev_baseline_metrics,
+            "validation": val_baseline_metrics,
+            "out_of_sample_test": oos_baseline_metrics,
             "honest_verdict": evidence_verdict,
-            "verdict_explanation": verdict_explanation
+            "verdict_explanation": verdict_explanation,
+            "release_requirements": {
+                "minimum_untouched_trades": VALIDATION_MIN_OUT_OF_SAMPLE_TRADES,
+                "target_hit_rate_pct": VALIDATION_TARGET_HIT_RATE_PCT,
+                "positive_net_return_required": True,
+                "positive_nifty_alpha_required": True,
+            },
         },
         "compounded_portfolio_simulation": test_portfolio_sim,
         "overall_performance": all_metrics,
@@ -852,17 +877,17 @@ def run_historical_backtest(
 
 ---
 
-## 3. Evaluation of Proposed Tier-1 Candidate Rules
-*(Criteria: Composite >= {TIER1_MIN_COMPOSITE_SCORE}, CMF-20 >= {TIER1_MIN_CMF}, Verified NSE Delivery Surge >= {TIER1_MIN_DELIVERY_SURGE}x, Nifty > 20-DMA)*
+## 3. Strict Evidence Gate & 80% Release Check
+*(Every candidate must pass Nifty regime, relative strength, technical, money-flow, RSI, MACD, volume, verified delivery, composite, and solvency checks.)*
 
-| Metric | Tier-1 Dev (50%) | Tier-1 Val (20%) | Tier-1 Test (30%) |
+| Metric | Strict Dev (50%) | Strict Val (20%) | Strict Test (30%) |
 | :--- | :---: | :---: | :---: |
-| **Qualified Trades (N)** | {dev_tier1_metrics['sample_size']} | {val_tier1_metrics['sample_size']} | {oos_tier1_metrics['sample_size']} |
-| **Directional Hit Rate** | {dev_tier1_metrics['directional_hit_rate_pct']}% | {val_tier1_metrics['directional_hit_rate_pct']}% | {oos_tier1_metrics['directional_hit_rate_pct']}% |
-| **Avg Net Return (5-Day)** | {dev_tier1_metrics['avg_net_return_pct']:+.2f}% | {val_tier1_metrics['avg_net_return_pct']:+.2f}% | {oos_tier1_metrics['avg_net_return_pct']:+.2f}% |
-| **Profit Factor** | {dev_tier1_metrics['profit_factor']} | {val_tier1_metrics['profit_factor']} | {oos_tier1_metrics['profit_factor']} |
+| **Qualified Trades (N)** | {dev_baseline_metrics['sample_size']} | {val_baseline_metrics['sample_size']} | {oos_baseline_metrics['sample_size']} |
+| **Directional Hit Rate** | {dev_baseline_metrics['directional_hit_rate_pct']}% | {val_baseline_metrics['directional_hit_rate_pct']}% | {oos_baseline_metrics['directional_hit_rate_pct']}% |
+| **Avg Net Return (5-Day)** | {dev_baseline_metrics['avg_net_return_pct']:+.2f}% | {val_baseline_metrics['avg_net_return_pct']:+.2f}% | {oos_baseline_metrics['avg_net_return_pct']:+.2f}% |
+| **Profit Factor** | {dev_baseline_metrics['profit_factor']} | {val_baseline_metrics['profit_factor']} | {oos_baseline_metrics['profit_factor']} |
 
-**Tier-1 Audit Verdict:** **{evidence_verdict}**  
+**Release Verdict:** **{evidence_verdict}**
 *{verdict_explanation}*
 
 ---

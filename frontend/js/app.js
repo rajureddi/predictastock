@@ -125,6 +125,17 @@ function setupEventListeners() {
     if (dateInput) {
         dateInput.value = new Date().toISOString().split("T")[0];
     }
+
+    // Past Data Tester run button explicit listener
+    const btnRunPast = document.getElementById("btnRunPastTester");
+    if (btnRunPast) {
+        btnRunPast.addEventListener("click", (e) => {
+            e.preventDefault();
+            if (typeof window.runSelectedHistoricalTest === "function") {
+                window.runSelectedHistoricalTest();
+            }
+        });
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -165,7 +176,8 @@ function switchTab(tabName) {
         "portfolio": "MY PORTFOLIO // FIFO ACCOUNTING & AUDIT",
         "risk": "SECTOR ALLOCATION & RISK // EXPOSURE RADAR",
         "scorecard": "PERFORMANCE & STRATEGY LAB // PIT VERIFICATION",
-        "reports": "DAILY BRIEFING & REPORTS // PRE-MARKET INTELLIGENCE"
+        "reports": "DAILY BRIEFING & REPORTS // PRE-MARKET INTELLIGENCE",
+        "past-tester": "PAST DATA TESTER // POINT-IN-TIME REALITY CHECK & BENCHMARK"
     };
     const titleEl = document.getElementById("currentViewTitle");
     if (titleEl && titleMap[tabName]) {
@@ -174,6 +186,9 @@ function switchTab(tabName) {
 
     if (tabName === "reports") {
         setupReportPreview();
+    }
+    if (tabName === "past-tester") {
+        initPastDataTester();
     }
 
     // Window resize trigger for chart redraw if returning to charts view
@@ -1336,6 +1351,81 @@ async function confirmDeleteStock() {
 }
 
 // --------------------------------------------------------------------------
+// DELETE STOCK RECORD FROM PERFORMANCE & STRATEGY LEDGER
+// --------------------------------------------------------------------------
+let targetPerfId = null;
+let targetPerfSymbol = null;
+let targetPerfType = null; // 'paper' or 'scorecard'
+
+function openDeletePerformanceModal(id, symbol, type = 'paper') {
+    targetPerfId = id;
+    targetPerfSymbol = symbol ? symbol.toUpperCase().trim() : "STOCK";
+    targetPerfType = type;
+
+    const symEl = document.getElementById("deletePerformanceModalSymbol");
+    if (symEl) symEl.textContent = targetPerfSymbol;
+
+    const ctxEl = document.getElementById("deletePerformanceModalContext");
+    if (ctxEl) {
+        ctxEl.textContent = type === 'paper' ? 'Paper Recommendation' : 'Completed Forecast Evaluation';
+    }
+
+    const modal = document.getElementById("deletePerformanceModal");
+    if (modal) modal.classList.add("active");
+}
+
+function closeDeletePerformanceModal() {
+    const modal = document.getElementById("deletePerformanceModal");
+    if (modal) modal.classList.remove("active");
+    targetPerfId = null;
+    targetPerfSymbol = null;
+    targetPerfType = null;
+}
+
+async function confirmDeletePerformance() {
+    if (!targetPerfId) return;
+    const delId = targetPerfId;
+    const delSym = targetPerfSymbol;
+    const delType = targetPerfType;
+
+    const btn = document.getElementById("btnConfirmDeletePerformance");
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Deleting...";
+    }
+
+    try {
+        const url = delType === 'paper' 
+            ? `${API_BASE}/api/paper-trading/recommendation/${encodeURIComponent(delId)}`
+            : `${API_BASE}/api/scorecard/evaluation/${encodeURIComponent(delId)}`;
+
+        const res = await fetch(url, { method: "DELETE" });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || "Failed to delete performance record");
+        }
+
+        closeDeletePerformanceModal();
+        showToast(`Deleted ${delSym} from performance ledger.`, "success");
+
+        // Reload data
+        if (delType === 'paper') {
+            await loadPaperTradingScorecard();
+            await loadStrategyEvidence();
+        } else {
+            await loadScorecard();
+        }
+    } catch (err) {
+        showToast(`Delete failed: ${err.message}`, "error");
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = "Confirm Delete";
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
 // Sector Concentration Radar
 // --------------------------------------------------------------------------
 function renderSectorRadar(data) {
@@ -1467,7 +1557,7 @@ async function loadPaperTradingScorecard() {
         if (!scorecard || scorecard.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 24px; font-family: var(--font-mono);">
+                    <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 24px; font-family: var(--font-mono);">
                         No prospective paper recommendations in active cohort yet. Re-screen equities to initialize forward tracking.
                     </td>
                 </tr>
@@ -1487,31 +1577,81 @@ async function loadPaperTradingScorecard() {
             const netStr = `${netRet > 0 ? '+' : ''}${netRet.toFixed(2)}%`;
             const entryPrice = row.entry_price || row.planned_entry_price;
 
+            // 1. Actual Price Now (Live CMP)
+            const cmp = row.current_price != null ? row.current_price : (row.signal_price || entryPrice);
+            const cmpChange = row.current_change_pct != null ? row.current_change_pct : 0.0;
+            const cmpChangeClass = cmpChange >= 0 ? "up" : "down";
+            const cmpChangeStr = `<span style="font-size: 10px; margin-left: 4px;" class="${cmpChangeClass}">(${cmpChange >= 0 ? '+' : ''}${cmpChange.toFixed(2)}%)</span>`;
+
+            // 2. Real Actual 5D Peak
+            let peakDisplay = '<span style="color: var(--text-muted);">--</span>';
+            if (row.actual_peak_price != null && row.actual_peak_price > 0) {
+                const isPeakBeaten = row.planned_target_price && row.actual_peak_price >= row.planned_target_price;
+                const peakColor = isPeakBeaten ? 'var(--accent-mint)' : 'var(--text-primary)';
+                peakDisplay = `<span style="color: ${peakColor}; font-weight: ${isPeakBeaten ? '700' : '400'};">₹${Number(row.actual_peak_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}</span>`;
+            } else if (row.status === 'PENDING_OPEN') {
+                peakDisplay = '<span style="color: var(--text-muted); font-size: 10.5px;">-- (Awaiting Entry)</span>';
+            } else if (row.status === 'REJECTED') {
+                peakDisplay = '<span style="color: var(--text-muted); font-size: 10.5px;">-- (Rejected)</span>';
+            } else if (row.status === 'ACTIVE') {
+                const basePrice = entryPrice || row.signal_price;
+                peakDisplay = basePrice ? `<span style="color: var(--text-secondary); font-size: 10.5px;">₹${Number(basePrice).toLocaleString('en-IN', {minimumFractionDigits: 1})} (In Flight)</span>` : '<span style="color: var(--text-muted);">--</span>';
+            }
+
+            // 3. Entry Price & Planned Target distinction
+            const refPrice = row.planned_entry_price || row.signal_price;
+            const entryDisplay = row.entry_price 
+                ? `₹${Number(row.entry_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}`
+                : `<span style="color: var(--text-muted); font-size: 10.5px;">Pending Open (Ref ₹${Number(refPrice).toLocaleString('en-IN', {minimumFractionDigits: 1})})</span>`;
+
+            const targetGain = refPrice && refPrice > 0 ? (((row.planned_target_price - refPrice) / refPrice) * 100).toFixed(1) : null;
+            const targetGainStr = targetGain ? ` <span style="font-size: 10px; color: var(--accent-mint); font-weight: normal;">(+${targetGain}%)</span>` : '';
+
             return `
                 <tr>
                     <td style="font-family: var(--font-mono); font-size: 11px;">
                         ${row.signal_date || '--'} &rarr; ${row.exit_date || (row.status === 'ACTIVE' ? 'T+5 (In Flight)' : '--')}
                     </td>
                     <td>
-                        <strong style="color: var(--text-primary); font-family: var(--font-mono);">${row.symbol}</strong>
+                        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                            <strong style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12.5px;">${row.symbol}</strong>
+                            <button class="btn-delete-row" onclick="openDeletePerformanceModal('${row.id}', '${row.symbol}', 'paper')" title="Delete ${row.symbol} from Ledger">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                </svg>
+                            </button>
+                        </div>
                     </td>
                     <td class="num font-mono">
-                        ₹${Number(entryPrice).toLocaleString('en-IN', {minimumFractionDigits: 1})}
+                        ₹${Number(cmp).toLocaleString('en-IN', {minimumFractionDigits: 1})}${cmpChangeStr}
+                    </td>
+                    <td class="num font-mono">
+                        ${entryDisplay}
                     </td>
                     <td class="num font-mono" style="color: var(--accent-mint);">
-                        ₹${Number(row.planned_target_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}
+                        ₹${Number(row.planned_target_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}${targetGainStr}
                     </td>
                     <td class="num font-mono">
-                        ${row.actual_peak_price ? '₹' + Number(row.actual_peak_price).toLocaleString('en-IN', {minimumFractionDigits: 1}) : '₹' + Number(row.planned_target_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}
+                        ${peakDisplay}
                     </td>
                     <td class="num font-mono">
-                        ${row.exit_price ? '₹' + Number(row.exit_price).toLocaleString('en-IN', {minimumFractionDigits: 1}) : (row.status === 'ACTIVE' ? '<span style="color: var(--accent-mint);">Holding</span>' : '--')}
+                        ${row.exit_price ? '₹' + Number(row.exit_price).toLocaleString('en-IN', {minimumFractionDigits: 1}) : (row.status === 'ACTIVE' ? '<span style="color: var(--accent-mint);">Holding</span>' : (row.status === 'PENDING_OPEN' ? '<span style="color: var(--text-muted); font-size: 10.5px;">Awaiting Open</span>' : '<span style="color: var(--text-muted); font-size: 10.5px;">--</span>'))}
                     </td>
                     <td class="num font-mono ${netClass}" style="font-weight: 700;">
                         ${row.status === 'CLOSED' ? netStr : (row.status === 'REJECTED' ? '<span style="color: var(--text-muted);">0.00%</span>' : '<span style="color: var(--text-secondary);">Pending T+5</span>')}
                     </td>
                     <td style="text-align: right;">
                         <span class="${badgeClass}">${verdict}</span>
+                    </td>
+                    <td class="col-action-sticky">
+                        <button class="btn btn-secondary btn-sm" onclick="openDeletePerformanceModal('${row.id}', '${row.symbol}', 'paper')" title="Delete ${row.symbol}" style="color: var(--accent-coral); font-size: 11px; padding: 4px 8px; display: inline-flex; align-items: center; gap: 4px;">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                            Delete
+                        </button>
                     </td>
                 </tr>
             `;
@@ -1520,7 +1660,7 @@ async function loadPaperTradingScorecard() {
         console.warn("Paper scorecard fetch error:", err);
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" style="text-align: center; color: var(--accent-coral); padding: 20px;">
+                <td colspan="10" style="text-align: center; color: var(--accent-coral); padding: 20px;">
                     Failed to load prospective paper-trading audit scorecard: ${err.message}
                 </td>
             </tr>
@@ -1640,7 +1780,7 @@ function renderScorecard(data) {
     if (!data.evaluations || data.evaluations.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="11" style="text-align: center; color: var(--text-muted); padding: 36px; font-family: var(--font-mono);">
+                <td colspan="13" style="text-align: center; color: var(--text-muted); padding: 36px; font-family: var(--font-mono);">
                     Currently tracking forward 5-day setups. Completed session endpoints will populate automatically upon settlement.
                 </td>
             </tr>
@@ -1648,25 +1788,52 @@ function renderScorecard(data) {
         return;
     }
 
-    tbody.innerHTML = data.evaluations.map(e => `
-        <tr>
-            <td><strong style="color: var(--text-primary); font-family: var(--font-mono);">${e.symbol}</strong></td>
-            <td style="font-family: var(--font-mono);">${e.start_date}</td>
-            <td style="font-family: var(--font-mono);">${e.end_date}</td>
-            <td class="num">&#8377;${Number(e.original_reference_price).toLocaleString("en-IN")}</td>
-            <td class="num">&#8377;${Number(e.predicted_target_price).toLocaleString("en-IN")}</td>
-            <td class="num up">+${e.predicted_appreciation_pct}%</td>
-            <td class="num">&#8377;${Number(e.actual_end_price || e.original_reference_price).toLocaleString("en-IN")}</td>
-            <td class="num ${e.actual_appreciation_pct >= 0 ? 'up' : 'down'}">${e.actual_appreciation_pct >= 0 ? '+' : ''}${e.actual_appreciation_pct || 0}%</td>
-            <td class="num">${e.nifty50_return_pct >= 0 ? '+' : ''}${e.nifty50_return_pct || 0}%</td>
-            <td class="num ${e.alpha_vs_nifty_pct >= 0 ? 'up' : 'down'}"><strong>${e.alpha_vs_nifty_pct >= 0 ? '+' : ''}${e.alpha_vs_nifty_pct || 0}%</strong></td>
-            <td>
-                <span class="badge ${e.direction_correct ? 'badge-low' : 'badge-high'}">
-                    ${e.direction_correct ? 'HIT (TARGET MET)' : 'MISS (DRIFT)'}
-                </span>
-            </td>
-        </tr>
-    `).join("");
+    tbody.innerHTML = data.evaluations.map(e => {
+        const curPrice = e.current_price != null ? e.current_price : (e.actual_end_price || e.original_reference_price);
+        const curChange = e.current_change_pct != null ? e.current_change_pct : 0.0;
+        const curChangeClass = curChange >= 0 ? "up" : "down";
+        const curChangeStr = `<span style="font-size: 10px; margin-left: 4px;" class="${curChangeClass}">(${curChange >= 0 ? '+' : ''}${curChange.toFixed(2)}%)</span>`;
+
+        return `
+            <tr>
+                <td>
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                        <strong style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12.5px;">${e.symbol}</strong>
+                        <button class="btn-delete-row" onclick="openDeletePerformanceModal('${e.id}', '${e.symbol}', 'scorecard')" title="Delete ${e.symbol}">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </td>
+                <td style="font-family: var(--font-mono);">${e.start_date}</td>
+                <td style="font-family: var(--font-mono);">${e.end_date}</td>
+                <td class="num font-mono">&#8377;${Number(curPrice).toLocaleString("en-IN", {minimumFractionDigits: 1})}${curChangeStr}</td>
+                <td class="num">&#8377;${Number(e.original_reference_price).toLocaleString("en-IN")}</td>
+                <td class="num" style="color: var(--accent-mint);">&#8377;${Number(e.predicted_target_price).toLocaleString("en-IN")}</td>
+                <td class="num up">+${e.predicted_appreciation_pct}%</td>
+                <td class="num">&#8377;${Number(e.actual_end_price || e.original_reference_price).toLocaleString("en-IN")}</td>
+                <td class="num ${e.actual_appreciation_pct >= 0 ? 'up' : 'down'}">${e.actual_appreciation_pct >= 0 ? '+' : ''}${e.actual_appreciation_pct || 0}%</td>
+                <td class="num">${e.nifty50_return_pct >= 0 ? '+' : ''}${e.nifty50_return_pct || 0}%</td>
+                <td class="num ${e.alpha_vs_nifty_pct >= 0 ? 'up' : 'down'}"><strong>${e.alpha_vs_nifty_pct >= 0 ? '+' : ''}${e.alpha_vs_nifty_pct || 0}%</strong></td>
+                <td>
+                    <span class="badge ${e.direction_correct ? 'badge-low' : 'badge-high'}">
+                        ${e.direction_correct ? 'HIT (TARGET MET)' : 'MISS (DRIFT)'}
+                    </span>
+                </td>
+                <td class="col-action-sticky">
+                    <button class="btn btn-secondary btn-sm" onclick="openDeletePerformanceModal('${e.id}', '${e.symbol}', 'scorecard')" title="Delete ${e.symbol}" style="color: var(--accent-coral); font-size: 11px; padding: 4px 8px; display: inline-flex; align-items: center; gap: 4px;">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                        Delete
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join("");
 }
 
 // --------------------------------------------------------------------------
@@ -2714,6 +2881,496 @@ async function saveTapetideToken() {
 window.openIntegrationsModal = openIntegrationsModal;
 window.closeIntegrationsModal = closeIntegrationsModal;
 window.saveTapetideToken = saveTapetideToken;
+
+// -------------------------------------------------------------
+// PAST DATA PREDICTION TESTER & HISTORICAL REALITY CHECK
+// -------------------------------------------------------------
+let pastTesterDatesLoaded = false;
+let pastTesterCurrentData = null;
+let pastTesterMode = "present"; // "present" or "recorded"
+let pastTesterDatesData = null;
+
+// Expose early on window to guarantee global scope availability
+window.initPastDataTester = initPastDataTester;
+window.switchPastTesterMode = switchPastTesterMode;
+window._switchPastTesterMode = switchPastTesterMode;
+window.selectAndRunPastTestDate = selectAndRunPastTestDate;
+window.selectAndRunRecordedPastDate = selectAndRunRecordedPastDate;
+window.onPastTesterRecordedSelect = onPastTesterRecordedSelect;
+window.runSelectedHistoricalTest = runSelectedHistoricalTest;
+window.runRecordedHistoricalRun = runRecordedHistoricalRun;
+window.executePastDataTest = executePastDataTest;
+window.showPastTesterGlobeLoader = showPastTesterGlobeLoader;
+window.hidePastTesterGlobeLoader = hidePastTesterGlobeLoader;
+
+function switchPastTesterMode(mode) {
+    pastTesterMode = mode;
+    const tabPresent = document.getElementById("tabModePresentEngine");
+    const tabRecorded = document.getElementById("tabModeRecordedPast");
+    const descText = document.getElementById("pastTesterModeDescText");
+    const controlsPresent = document.getElementById("pastTesterPresentControls");
+    const controlsRecorded = document.getElementById("pastTesterRecordedControls");
+
+    if (mode === "present") {
+        if (tabPresent) {
+            tabPresent.style.background = "#38bdf8";
+            tabPresent.style.color = "#020617";
+            tabPresent.style.fontWeight = "600";
+        }
+        if (tabRecorded) {
+            tabRecorded.style.background = "transparent";
+            tabRecorded.style.color = "var(--text-muted)";
+            tabRecorded.style.fontWeight = "500";
+        }
+        if (controlsPresent) controlsPresent.style.display = "flex";
+        if (controlsRecorded) controlsRecorded.style.display = "none";
+        if (descText) descText.textContent = "Evaluating historical dates with today's new multi-factor calibrated engine";
+        runSelectedHistoricalTest();
+    } else {
+        if (tabRecorded) {
+            tabRecorded.style.background = "#38bdf8";
+            tabRecorded.style.color = "#020617";
+            tabRecorded.style.fontWeight = "600";
+        }
+        if (tabPresent) {
+            tabPresent.style.background = "transparent";
+            tabPresent.style.color = "var(--text-muted)";
+            tabPresent.style.fontWeight = "500";
+        }
+        if (controlsPresent) controlsPresent.style.display = "none";
+        if (controlsRecorded) controlsRecorded.style.display = "flex";
+        if (descText) descText.textContent = "Inspecting sealed historical predictions actually archived in the database";
+        runRecordedHistoricalRun();
+    }
+}
+
+async function initPastDataTester() {
+    if (pastTesterDatesLoaded) return;
+    try {
+        const res = await fetch("/api/historical-test/dates");
+        if (!res.ok) throw new Error("Could not load historical test dates");
+        const data = await res.json();
+        pastTesterDatesData = data;
+        
+        // 1. Render quick preset buttons for Present Engine
+        const presetContainer = document.getElementById("pastTesterPresetBtns");
+        if (presetContainer && data.presets) {
+            presetContainer.innerHTML = data.presets.map(p => `
+                <button class="btn btn-secondary btn-sm" onclick="selectAndRunPastTestDate('${p.date}')" style="font-size: 11px; padding: 4px 10px; cursor: pointer;">
+                    ${p.label}
+                </button>
+            `).join("");
+        }
+
+        // 2. Render recorded past dates pills for Archived Runs mode
+        const pillsContainer = document.getElementById("pastTesterRecordedPills");
+        if (pillsContainer && data.recorded_dates) {
+            pillsContainer.innerHTML = data.recorded_dates.map(r => `
+                <button class="btn btn-secondary btn-sm" onclick="selectAndRunRecordedPastDate('${r.date}')" style="font-size: 11px; padding: 4px 10px; cursor: pointer;">
+                    ${r.formatted}
+                </button>
+            `).join("");
+        }
+
+        // 3. Render recorded past runs dropdown
+        const dropdown = document.getElementById("pastTesterRecordedDropdown");
+        if (dropdown && data.recorded_dates) {
+            dropdown.innerHTML = `<option value="">Select sealed past run...</option>` +
+                data.recorded_dates.map(r => `
+                    <option value="${r.date}">${r.formatted} (${r.pick_count} archived setups)</option>
+                `).join("");
+            if (data.recorded_dates.length > 0) {
+                dropdown.value = data.recorded_dates[0].date;
+            }
+        }
+
+        // 4. Custom date picker constraints for Present Engine mode
+        const customDateInput = document.getElementById("pastTesterCustomDate");
+        if (customDateInput && data.max_test_date) {
+            customDateInput.max = data.max_test_date;
+            if (data.presets && data.presets.length > 0) {
+                customDateInput.value = data.presets[0].date;
+            }
+        }
+
+        pastTesterDatesLoaded = true;
+
+        // Auto-run the default preset (1 Week Ago) with Present Engine
+        if (data.presets && data.presets.length > 0) {
+            selectAndRunPastTestDate(data.presets[0].date);
+        }
+    } catch (err) {
+        console.error("Error loading historical test dates:", err);
+    }
+}
+
+function selectAndRunPastTestDate(dateStr) {
+    const customDateInput = document.getElementById("pastTesterCustomDate");
+    if (customDateInput) customDateInput.value = dateStr;
+    executePastDataTest(dateStr, true);
+}
+
+function selectAndRunRecordedPastDate(dateStr) {
+    const dropdown = document.getElementById("pastTesterRecordedDropdown");
+    if (dropdown) dropdown.value = dateStr;
+    executePastDataTest(dateStr, false);
+}
+
+function onPastTesterRecordedSelect(dateStr) {
+    if (!dateStr) return;
+    executePastDataTest(dateStr, false);
+}
+
+function runSelectedHistoricalTest() {
+    const customDateInput = document.getElementById("pastTesterCustomDate");
+    const targetDate = customDateInput ? customDateInput.value : null;
+    if (!targetDate) {
+        if (typeof showToast === "function") showToast("Please select a historical past date", "warning");
+        return;
+    }
+    executePastDataTest(targetDate, true);
+}
+
+function runRecordedHistoricalRun() {
+    const dropdown = document.getElementById("pastTesterRecordedDropdown");
+    let targetDate = dropdown ? dropdown.value : null;
+    if (!targetDate && pastTesterDatesData && pastTesterDatesData.recorded_dates && pastTesterDatesData.recorded_dates.length > 0) {
+        targetDate = pastTesterDatesData.recorded_dates[0].date;
+        if (dropdown) dropdown.value = targetDate;
+    }
+    if (!targetDate) {
+        if (typeof showToast === "function") showToast("No recorded historical run selected", "warning");
+        return;
+    }
+    executePastDataTest(targetDate, false);
+}
+
+let pastTesterLoaderInterval = null;
+
+function showPastTesterGlobeLoader(targetDate, isPresentEngine = true) {
+    const overlay = document.getElementById("globeLoaderOverlay");
+    const titleEl = document.getElementById("globeLoaderTitle");
+    const subEl = document.getElementById("globeLoaderSubtitle");
+    const barEl = document.getElementById("globeProgressBar");
+    const stepEl = document.getElementById("globeStepText");
+    const percentEl = document.getElementById("globePercentVal");
+    const countPillEl = document.getElementById("globeCountPill");
+
+    if (!overlay) return;
+
+    if (typeof initThreeGlobeLoader === "function") {
+        initThreeGlobeLoader();
+    }
+
+    const modeTitle = isPresentEngine 
+        ? "HISTORICAL BACKTEST // CALIBRATED ENGINE" 
+        : "ARCHIVE AUDIT // SEALED HISTORICAL DATABASE";
+    const modeSubtitle = isPresentEngine
+        ? `Replaying NSE benchmark equities as-of ${targetDate} with today's calibrated multi-factor engine...`
+        : `Retrieving sealed historical recommendations and evaluating actual 5-day market path for ${targetDate}...`;
+
+    if (titleEl) titleEl.textContent = modeTitle;
+    if (subEl) subEl.textContent = modeSubtitle;
+
+    if (barEl) barEl.style.width = "10%";
+    if (percentEl) percentEl.textContent = "10%";
+    if (countPillEl) countPillEl.textContent = `Point-in-Time Session: ${targetDate}`;
+    if (stepEl) stepEl.textContent = "INITIALIZING POINT-IN-TIME MARKET DATA...";
+
+    overlay.classList.add("active");
+
+    clearInterval(pastTesterLoaderInterval);
+    if (typeof scanProgressPollInterval !== "undefined" && scanProgressPollInterval) {
+        clearInterval(scanProgressPollInterval);
+    }
+
+    const stages = [
+        { pct: 24, pill: `Reconstructing Daily Bars for ${targetDate}...`, step: "FETCHING POINT-IN-TIME PRICE & VOLUME SERIES..." },
+        { pct: 48, pill: isPresentEngine ? "Applying Quantitative Factor Pipeline..." : "Reading Immutable Database Archive...", step: isPresentEngine ? "COMPUTING REGIME, MOMENTUM & VOLATILITY FILTERS..." : "EXTRACTING SEALED PREDICTIONS SNAPSHOT..." },
+        { pct: 72, pill: "Replaying Subsequent 5-Day Market Realization...", step: "CALCULATING FORWARD PRICE PATH & PEAK HIGH MARKS..." },
+        { pct: 88, pill: "Benchmarking Excess Return vs Nifty 50...", step: "AUDITING TARGET HIT RATES & ALPHA SPREAD..." },
+        { pct: 95, pill: "Synthesizing Final Verification Scorecard...", step: "FINALIZING BACKTEST AUDIT METRICS..." }
+    ];
+
+    let currentStage = 0;
+    pastTesterLoaderInterval = setInterval(() => {
+        if (currentStage < stages.length) {
+            const st = stages[currentStage];
+            if (barEl) barEl.style.width = `${st.pct}%`;
+            if (percentEl) percentEl.textContent = `${st.pct}%`;
+            if (countPillEl) countPillEl.textContent = st.pill;
+            if (stepEl) stepEl.textContent = st.step;
+            currentStage++;
+        }
+    }, 400);
+}
+
+function hidePastTesterGlobeLoader() {
+    const overlay = document.getElementById("globeLoaderOverlay");
+    const barEl = document.getElementById("globeProgressBar");
+    const percentEl = document.getElementById("globePercentVal");
+    const countPillEl = document.getElementById("globeCountPill");
+    const stepEl = document.getElementById("globeStepText");
+
+    clearInterval(pastTesterLoaderInterval);
+
+    if (barEl) barEl.style.width = "100%";
+    if (percentEl) percentEl.textContent = "100%";
+    if (countPillEl) countPillEl.textContent = "✓ Historical Audit Complete";
+    if (stepEl) stepEl.textContent = "BACKTEST EVALUATION COMPLETED SUCCESSFULLY";
+
+    setTimeout(() => {
+        if (overlay) overlay.classList.remove("active");
+        if (barEl) barEl.style.width = "0%";
+    }, 350);
+}
+
+function setPastTesterLoading(isLoading, targetDate, isPresentEngine = true) {
+    const btnPresent = document.getElementById("btnRunPastTester");
+    const btnRecorded = document.getElementById("btnRunRecordedRun");
+    const textPresent = document.getElementById("btnRunPastTesterText");
+    const textRecorded = document.getElementById("btnRunRecordedRunText");
+    const statusPresent = document.getElementById("pastTesterRunStatus");
+    const statusRecorded = document.getElementById("pastTesterRecordedRunStatus");
+
+    const modeName = isPresentEngine ? "Present Calibrated Model" : "Archived Database Record";
+
+    if (isLoading) {
+        if (btnPresent) btnPresent.disabled = true;
+        if (btnRecorded) btnRecorded.disabled = true;
+        if (textPresent) textPresent.innerHTML = `<span class="loading-spinner-sm" style="margin-right: 5px;"></span> Evaluating...`;
+        if (textRecorded) textRecorded.innerHTML = `<span class="loading-spinner-sm" style="margin-right: 5px;"></span> Loading...`;
+
+        const loadingHtml = `<span class="badge pulsing-badge" style="background: rgba(234, 179, 8, 0.2); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.4);"><span class="loading-spinner-sm" style="border-color: rgba(234,179,8,0.3); border-top-color: #eab308; margin-right: 5px;"></span> EVALUATING</span> Analyzing market bars for <strong>${targetDate}</strong> (${modeName})...`;
+        if (statusPresent) statusPresent.innerHTML = loadingHtml;
+        if (statusRecorded) statusRecorded.innerHTML = loadingHtml;
+
+        // Keep existing table rows intact with slight opacity while 3D globe overlay runs
+        const tbody = document.getElementById("pastTesterTableBody");
+        if (tbody) tbody.style.opacity = "0.45";
+
+        // Set KPI placeholders
+        ["ptKpiHitRate", "ptKpiWinRate", "ptKpiAvgPred", "ptKpiAvgPeak", "ptKpiNifty", "ptKpiAlpha"].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = `<span style="opacity: 0.4; font-size: 16px;">...</span>`;
+        });
+    } else {
+        if (btnPresent) btnPresent.disabled = false;
+        if (btnRecorded) btnRecorded.disabled = false;
+        if (textPresent) textPresent.textContent = "Run Present Model Test";
+        if (textRecorded) textRecorded.textContent = "Load Sealed Past Run";
+        const tbody = document.getElementById("pastTesterTableBody");
+        if (tbody) tbody.style.opacity = "1";
+    }
+}
+
+async function executePastDataTest(targetDate, forceRecalculate = true) {
+    if (!targetDate) return;
+    showPastTesterGlobeLoader(targetDate, forceRecalculate);
+    setPastTesterLoading(true, targetDate, forceRecalculate);
+
+    try {
+        const res = await fetch("/api/historical-test/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target_date: targetDate, force_recalculate: forceRecalculate })
+        });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || "Historical test execution failed");
+        }
+        const data = await res.json();
+        const report = data.report;
+        pastTesterCurrentData = report;
+
+        if (report.error && (!report.results || report.results.length === 0)) {
+            const tbody = document.getElementById("pastTesterTableBody");
+            if (tbody) {
+                tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: #f59e0b; padding: 40px 16px;">
+                    <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 6px;">Notice</div>
+                    <div style="font-size: 12px; max-width: 500px; margin: 0 auto;">${report.error}</div>
+                </td></tr>`;
+            }
+            const statusHtml = `<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3);">NO RUN RECORDED</span> ${report.error}`;
+            const s1 = document.getElementById("pastTesterRunStatus");
+            const s2 = document.getElementById("pastTesterRecordedRunStatus");
+            if (s1) s1.innerHTML = statusHtml;
+            if (s2) s2.innerHTML = statusHtml;
+            return;
+        }
+
+        // Render KPI metrics
+        renderPastTesterKPIs(report);
+
+        // Render table
+        renderPastTesterTable(report);
+
+        const badgeColor = report.target_hit_rate_pct >= 60 ? "#22c55e" : (report.target_hit_rate_pct > 0 ? "#38bdf8" : "#f59e0b");
+        const statusHtml = `<span class="badge" style="background: rgba(56, 189, 248, 0.15); color: ${badgeColor}; border: 1px solid ${badgeColor}; font-weight: 700;">AUDIT COMPLETE</span> [${report.run_mode_label || (forceRecalculate ? "Present Calibrated Engine" : "Sealed Database Run")}] Date: <strong>${report.formatted_date || targetDate}</strong> • ${report.total_picks} Setups • Hit Rate: <strong>${report.target_hit_rate_pct}%</strong>`;
+        
+        const s1 = document.getElementById("pastTesterRunStatus");
+        const s2 = document.getElementById("pastTesterRecordedRunStatus");
+        if (s1) s1.innerHTML = statusHtml;
+        if (s2) s2.innerHTML = statusHtml;
+    } catch (err) {
+        console.error("Historical test error:", err);
+        const errHtml = `<span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">ERROR</span> ${err.message}`;
+        const s1 = document.getElementById("pastTesterRunStatus");
+        const s2 = document.getElementById("pastTesterRecordedRunStatus");
+        if (s1) s1.innerHTML = errHtml;
+        if (s2) s2.innerHTML = errHtml;
+
+        const tbody = document.getElementById("pastTesterTableBody");
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--color-bearish); padding: 36px 16px;">
+                Error evaluating past data for ${targetDate}: ${err.message}
+            </td></tr>`;
+        }
+    } finally {
+        setPastTesterLoading(false, targetDate, forceRecalculate);
+        hidePastTesterGlobeLoader();
+    }
+}
+
+function renderPastTesterKPIs(rep) {
+    const elHitRate = document.getElementById("ptKpiHitRate");
+    const elHitCount = document.getElementById("ptKpiHitCount");
+    const elWinRate = document.getElementById("ptKpiWinRate");
+    const elWinCount = document.getElementById("ptKpiWinCount");
+    const elAvgPred = document.getElementById("ptKpiAvgPred");
+    const elAvgPeak = document.getElementById("ptKpiAvgPeak");
+    const elAvgEnd = document.getElementById("ptKpiAvgEnd");
+    const elNifty = document.getElementById("ptKpiNifty");
+    const elAlpha = document.getElementById("ptKpiAlpha");
+    const elRegime = document.getElementById("ptKpiRegime");
+    const elAvgProb = document.getElementById("ptKpiAvgProb");
+
+    if (elHitRate) {
+        elHitRate.textContent = `${rep.target_hit_rate_pct}%`;
+        elHitRate.style.color = rep.target_hit_rate_pct >= 60 ? "var(--color-bullish)" : (rep.target_hit_rate_pct > 0 ? "#38bdf8" : "var(--color-bearish)");
+    }
+    if (elHitCount) {
+        elHitCount.textContent = `${rep.targets_hit_count} of ${rep.total_picks} hit target at peak`;
+    }
+    if (elWinRate) {
+        elWinRate.textContent = `${rep.win_rate_pct}%`;
+        elWinRate.style.color = rep.win_rate_pct >= 50 ? "var(--color-bullish)" : "var(--color-bearish)";
+    }
+    if (elWinCount) {
+        elWinCount.textContent = `${rep.profitable_count} of ${rep.total_picks} profitable at Day 5`;
+    }
+    if (elAvgPred) elAvgPred.textContent = `Pred: +${rep.avg_predicted_return_pct}%`;
+    if (elAvgPeak) {
+        elAvgPeak.textContent = `Peak: ${rep.avg_actual_peak_return_pct >= 0 ? '+' : ''}${rep.avg_actual_peak_return_pct}%`;
+        elAvgPeak.style.color = rep.avg_actual_peak_return_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
+    }
+    if (elAvgEnd) elAvgEnd.textContent = `Avg Day-5 Close: ${rep.avg_actual_end_return_pct >= 0 ? '+' : ''}${rep.avg_actual_end_return_pct}%`;
+    if (elNifty) {
+        elNifty.textContent = `${rep.nifty_benchmark_return_pct >= 0 ? '+' : ''}${rep.nifty_benchmark_return_pct}%`;
+        elNifty.style.color = rep.nifty_benchmark_return_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
+    }
+    if (elAlpha) {
+        elAlpha.textContent = `${rep.alpha_vs_nifty_pct >= 0 ? '+' : ''}${rep.alpha_vs_nifty_pct}%`;
+        elAlpha.style.color = rep.alpha_vs_nifty_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
+    }
+    if (elRegime) {
+        elRegime.textContent = rep.market_regime || "EVALUATED";
+        elRegime.style.color = (rep.market_regime && rep.market_regime.includes("CORRECTION")) ? "#f59e0b" : "#22c55e";
+    }
+    if (elAvgProb) {
+        elAvgProb.textContent = `Avg Calibrated Win Prob: ${rep.avg_win_probability_pct || 65}%`;
+    }
+}
+
+function renderPastTesterTable(rep) {
+    const tbody = document.getElementById("pastTesterTableBody");
+    if (!tbody) return;
+
+    if (!rep.results || rep.results.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 32px;">No historical prediction records found for this date.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = rep.results.map((r) => {
+        const peakColor = r.actual_peak_return_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
+        const endColor = r.actual_end_return_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
+        
+        let badgeStyle = "background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);";
+        if (r.target_hit) {
+            badgeStyle = "background: rgba(34, 197, 94, 0.18); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.4); font-weight: 700;";
+        } else if (r.status_badge === "PROFITABLE") {
+            badgeStyle = "background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-weight: 600;";
+        } else if (r.status_badge === "STOPPED_OUT") {
+            badgeStyle = "background: rgba(249, 115, 22, 0.15); color: #f97316; border: 1px solid rgba(249, 115, 22, 0.3);";
+        }
+
+        // Mini day-by-day path chips
+        const dayChips = (r.day_by_day || []).map(d => {
+            const dColor = d.change_pct >= 0 ? "#22c55e" : "#ef4444";
+            return `<span style="display: inline-block; padding: 2px 5px; font-size: 10px; font-family: var(--font-mono); border-radius: 3px; background: rgba(15,23,42,0.6); color: ${dColor}; margin: 1px;" title="${d.date}: Close Rs.${d.close} (${d.change_pct >= 0 ? '+' : ''}${d.change_pct}%)">D${d.day_number}:${d.change_pct >= 0 ? '+' : ''}${d.change_pct}%</span>`;
+        }).join("");
+
+        const winProbVal = r.win_probability_pct ? Math.round(r.win_probability_pct) : 65;
+        const setupQ = r.setup_quality || (winProbVal >= 70 ? 'A+' : (winProbVal >= 60 ? 'A' : 'B'));
+        const rrVal = r.reward_to_risk ? r.reward_to_risk.toFixed(1) : '1.5';
+
+        return `
+            <tr style="border-bottom: 1px solid var(--border-subtle);">
+                <td style="padding: 12px 14px;">
+                    <div style="font-weight: 700; color: var(--text-primary);">${r.symbol}</div>
+                    <div style="font-size: 11px; color: var(--text-muted);">${r.name || r.sector}</div>
+                </td>
+                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); color: var(--text-secondary);">
+                    ₹${r.reference_price.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                </td>
+                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); font-weight: 600; color: #38bdf8;">
+                    ₹${r.predicted_target_price.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                </td>
+                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); font-weight: 600; color: var(--color-bullish);">
+                    +${r.predicted_return_pct.toFixed(2)}%
+                </td>
+                <td style="padding: 12px; text-align: center; font-family: var(--font-mono);">
+                    <span class="badge" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 11px;">
+                        ${winProbVal}% (${setupQ})
+                    </span>
+                    <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">R/R: ${rrVal}x</div>
+                </td>
+                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); background: rgba(56, 189, 248, 0.03);">
+                    <div style="font-weight: 700; color: ${peakColor};">₹${r.actual_peak_price.toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                    <div style="font-size: 10.5px; color: ${peakColor};">(${r.actual_peak_return_pct >= 0 ? '+' : ''}${r.actual_peak_return_pct.toFixed(2)}%)</div>
+                </td>
+                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); background: rgba(56, 189, 248, 0.03);">
+                    <div style="font-weight: 700; color: ${endColor};">₹${r.actual_end_price.toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                    <div style="font-size: 10.5px; color: ${endColor};">(${r.actual_end_return_pct >= 0 ? '+' : ''}${r.actual_end_return_pct.toFixed(2)}%)</div>
+                </td>
+                <td style="padding: 12px; text-align: center;">
+                    <span class="badge" style="${badgeStyle}">${r.badge_label}</span>
+                </td>
+                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); font-size: 11.5px; color: ${r.variance_pct >= 0 ? 'var(--color-bullish)' : 'var(--color-bearish)'};">
+                    ${r.variance_pct >= 0 ? '+' : ''}${r.variance_pct.toFixed(2)}%
+                </td>
+                <td style="padding: 12px 14px; text-align: center;">
+                    <div style="display: flex; flex-wrap: wrap; justify-content: center; max-width: 200px;">
+                        ${dayChips || '<span style="color: var(--text-muted); font-size: 11px;">Pending</span>'}
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join("");
+}
+
+window.initPastDataTester = initPastDataTester;
+window.switchPastTesterMode = switchPastTesterMode;
+window._switchPastTesterMode = switchPastTesterMode;
+window.selectAndRunPastTestDate = selectAndRunPastTestDate;
+window.selectAndRunRecordedPastDate = selectAndRunRecordedPastDate;
+window.onPastTesterRecordedSelect = onPastTesterRecordedSelect;
+window.runSelectedHistoricalTest = runSelectedHistoricalTest;
+window.runRecordedHistoricalRun = runRecordedHistoricalRun;
+window.executePastDataTest = executePastDataTest;
+window.showPastTesterGlobeLoader = showPastTesterGlobeLoader;
+window.hidePastTesterGlobeLoader = hidePastTesterGlobeLoader;
+
 
 
 

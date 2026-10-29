@@ -13,13 +13,14 @@ import logging
 from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Tuple
 import math
+import pandas as pd
 
 from app.database import get_db_connection
 from app.services.historical_backtest import (
     evaluate_t1_open_entry, simulate_path_dependent_trade,
     TOTAL_ROUNDTRIP_FRICTION_PCT
 )
-from app.services.market_data import get_historical_market_bars
+from app.services.market_data import get_historical_market_bars, get_latest_quote
 
 logger = logging.getLogger(__name__)
 
@@ -449,17 +450,19 @@ def process_paper_trading_cycle(cohort_id: str = DEFAULT_COHORT_ID) -> Dict[str,
             WHERE cohort_id = ?
             """, (new_cash, cohort_id))
 
+            actual_peak = float(sim_res.get("actual_peak_price", entry_price))
             cursor.execute("""
             UPDATE paper_recommendations
             SET status = 'CLOSED',
                 exit_date = ?,
                 exit_price = ?,
                 exit_reason = ?,
+                actual_peak_price = ?,
                 gross_pnl = ?,
                 net_pnl = ?,
                 net_return_pct = ?
             WHERE id = ?
-            """, (exit_date_str, exit_price, exit_reason, round(gross_pnl, 2), net_pnl, net_ret_pct, rec_id))
+            """, (exit_date_str, exit_price, exit_reason, round(actual_peak, 2), round(gross_pnl, 2), net_pnl, net_ret_pct, rec_id))
 
             event_type = "TARGET_HIT" if exit_reason == "TARGET_HIT" else ("STOP_TRIGGERED" if "STOP" in exit_reason else "SETTLED_T5")
             log_paper_execution_event(
@@ -626,11 +629,69 @@ def get_paper_trading_scorecard(cohort_id: str = DEFAULT_COHORT_ID) -> List[Dict
         else:
             audit_verdict = "BREAKEVEN"
 
+        sym = r["symbol"]
+        entry_d = r.get("entry_date") or r.get("signal_date")
+        exit_d = r.get("exit_date")
+
+        # 1. Real Actual Price Now (CMP)
+        quote = get_latest_quote(sym)
+        current_price = None
+        current_change_pct = 0.0
+        if quote and quote.get("close_price") is not None:
+            current_price = round(float(quote["close_price"]), 2)
+            current_change_pct = round(float(quote.get("day_change_pct") or 0.0), 2)
+
+        # 2. Real Actual 5D Peak Price
+        # Rule: For PENDING_OPEN or REJECTED, peak price is None (never show target price!)
+        actual_peak = None
+        if status in ("ACTIVE", "CLOSED"):
+            if r.get("actual_peak_price") is not None:
+                actual_peak = round(float(r["actual_peak_price"]), 2)
+
+            try:
+                bars_df = get_historical_market_bars(sym)
+                if not bars_df.empty and entry_d:
+                    entry_dt = pd.to_datetime(entry_d)
+                    window_bars = bars_df[bars_df.index >= entry_dt]
+                    if exit_d:
+                        exit_dt = pd.to_datetime(exit_d)
+                        window_bars = window_bars[window_bars.index <= exit_dt]
+                    else:
+                        window_bars = window_bars.head(5)
+
+                    if not window_bars.empty:
+                        bars_high = float(window_bars["High"].max())
+                        if actual_peak is None or bars_high > actual_peak:
+                            actual_peak = round(bars_high, 2)
+            except Exception as e:
+                logger.warning(f"Error computing peak price for {sym}: {e}")
+
+            # If ACTIVE and live quote has a higher high in today's session
+            if status == "ACTIVE" and quote and quote.get("high"):
+                try:
+                    live_h = float(quote["high"])
+                    if actual_peak is None or live_h > actual_peak:
+                        actual_peak = round(live_h, 2)
+                except Exception:
+                    pass
+
+            if actual_peak is None and r.get("entry_price"):
+                actual_peak = round(float(r["entry_price"]), 2)
+
+        # Fallback for current_price if quote unavailable
+        if current_price is None:
+            current_price = r.get("exit_price") or r.get("entry_price") or r.get("signal_price")
+            if current_price is not None:
+                current_price = round(float(current_price), 2)
+
         item = {
             "id": rec_id,
             "symbol": r["symbol"],
             "signal_date": r["signal_date"],
             "signal_price": r["signal_price"],
+            "current_price": current_price,
+            "current_change_pct": current_change_pct,
+            "actual_peak_price": actual_peak,
             "direction": r["signal_direction"],
             "composite_score": r["composite_score"],
             "planned_entry_price": r["planned_entry_price"],
@@ -654,3 +715,77 @@ def get_paper_trading_scorecard(cohort_id: str = DEFAULT_COHORT_ID) -> List[Dict
 
     conn.close()
     return scorecard
+
+
+def delete_paper_recommendation(rec_id: str) -> Dict[str, Any]:
+    """
+    Deletes an individual forward paper recommendation by its unique ID.
+    If the position was ACTIVE, restores the allocated capital back to the cohort cash balance.
+    Also deletes all associated paper_execution_events.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM paper_recommendations WHERE id = ?", (rec_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return {"status": "NOT_FOUND", "deleted": False, "message": f"Recommendation {rec_id} not found."}
+
+    rec = dict(row)
+    cohort_id = rec.get("cohort_id", DEFAULT_COHORT_ID)
+    status = rec.get("status")
+    allocated = float(rec.get("allocated_capital") or 0.0)
+
+    # If position was ACTIVE, refund allocated cash back to cohort pool
+    if status == "ACTIVE" and allocated > 0:
+        cursor.execute("SELECT cash_balance FROM paper_trading_cohorts WHERE cohort_id = ?", (cohort_id,))
+        c_row = cursor.fetchone()
+        if c_row:
+            new_cash = float(c_row["cash_balance"]) + allocated
+            cursor.execute("UPDATE paper_trading_cohorts SET cash_balance = ? WHERE cohort_id = ?", (new_cash, cohort_id))
+
+    cursor.execute("DELETE FROM paper_execution_events WHERE recommendation_id = ?", (rec_id,))
+    cursor.execute("DELETE FROM paper_recommendations WHERE id = ?", (rec_id,))
+    conn.commit()
+    conn.close()
+    return {
+        "status": "SUCCESS",
+        "deleted": True,
+        "deleted_id": rec_id,
+        "symbol": rec["symbol"],
+        "message": f"Successfully deleted paper recommendation for {rec['symbol']}."
+    }
+
+
+def delete_paper_recommendations_by_symbol(symbol: str, cohort_id: str = DEFAULT_COHORT_ID) -> Dict[str, Any]:
+    """Deletes all forward paper recommendations for a given symbol in the active cohort."""
+    clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, status, allocated_capital FROM paper_recommendations WHERE symbol = ? AND cohort_id = ?", (clean_sym, cohort_id))
+    recs = [dict(r) for r in cursor.fetchall()]
+    if not recs:
+        conn.close()
+        return {"status": "NOT_FOUND", "deleted": False, "deleted_count": 0, "message": f"No recommendations found for {clean_sym}."}
+
+    refund_total = sum(float(r["allocated_capital"] or 0.0) for r in recs if r["status"] == "ACTIVE")
+    if refund_total > 0:
+        cursor.execute("SELECT cash_balance FROM paper_trading_cohorts WHERE cohort_id = ?", (cohort_id,))
+        c_row = cursor.fetchone()
+        if c_row:
+            new_cash = float(c_row["cash_balance"]) + refund_total
+            cursor.execute("UPDATE paper_trading_cohorts SET cash_balance = ? WHERE cohort_id = ?", (new_cash, cohort_id))
+
+    for r in recs:
+        cursor.execute("DELETE FROM paper_execution_events WHERE recommendation_id = ?", (r["id"],))
+    cursor.execute("DELETE FROM paper_recommendations WHERE symbol = ? AND cohort_id = ?", (clean_sym, cohort_id))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return {
+        "status": "SUCCESS",
+        "deleted": True,
+        "deleted_count": deleted_count,
+        "symbol": clean_sym,
+        "message": f"Successfully deleted {deleted_count} recommendation(s) for {clean_sym}."
+    }

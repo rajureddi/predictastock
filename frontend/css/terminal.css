@@ -1596,6 +1596,38 @@ body.light-theme .watchlist-row.selected {
     background: var(--bg-elevated);
 }
 
+.terminal-table th.col-action-sticky,
+.terminal-table td.col-action-sticky {
+    position: sticky;
+    right: 0;
+    background: var(--bg-surface);
+    z-index: 3;
+    text-align: center;
+    box-shadow: -4px 0 8px rgba(0, 0, 0, 0.45);
+}
+
+.terminal-table tbody tr:hover td.col-action-sticky {
+    background: var(--bg-elevated);
+}
+
+.btn-delete-row {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--accent-coral);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+}
+
+.btn-delete-row:hover {
+    background: var(--accent-coral-bg);
+    border-color: var(--accent-coral-border);
+    transform: scale(1.1);
+}
+
 /* --------------------------------------------------------------------------
    VIEW 4: STRATEGY LAB & AUDIT EVIDENCE BANNER
    -------------------------------------------------------------------------- */
@@ -2282,3 +2314,99 @@ body.light-theme .toast.toast-info { border-left: 3px solid var(--accent-mint); 
     }
 }
 
+/* ==========================================================================
+   Loading Spinners & Historical Tester State Animations
+   ========================================================================== */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes pulseGlow {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.65; transform: scale(0.98); }
+}
+
+.loading-spinner {
+    width: 22px;
+    height: 22px;
+    border: 2.5px solid rgba(56, 189, 248, 0.2);
+    border-top-color: #38bdf8;
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+    display: inline-block;
+}
+
+.loading-spinner-sm {
+    width: 13px;
+    height: 13px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: spin 0.65s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.loading-spinner-lg {
+    width: 36px;
+    height: 36px;
+    border: 3.5px solid rgba(56, 189, 248, 0.15);
+    border-top-color: #38bdf8;
+    border-radius: 50%;
+    animation: spin 0.75s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    display: block;
+}
+
+.pulsing-badge {
+    animation: pulseGlow 1.8s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   PAST DATA TESTER SCORECARD GRID & CARDS
+   ========================================================================== */
+#pastTesterScorecardBanner {
+    display: grid !important;
+    grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+    padding: 16px 18px !important;
+    border-bottom: 1px solid var(--border-subtle);
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+#pastTesterScorecardBanner .kpi-card {
+    background: var(--bg-surface);
+    padding: 12px 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 84px;
+    box-sizing: border-box;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+#pastTesterScorecardBanner .kpi-card:hover {
+    border-color: rgba(56, 189, 248, 0.4);
+    transform: translateY(-1px);
+}
+
+@media (max-width: 1380px) {
+    #pastTesterScorecardBanner {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (max-width: 768px) {
+    #pastTesterScorecardBanner {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (max-width: 480px) {
+    #pastTesterScorecardBanner {
+        grid-template-columns: 1fr !important;
+    }
+}

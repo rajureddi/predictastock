@@ -27,6 +27,10 @@ venv/
 .venv/
 env/
 ENV/
+.python_packages/
+backend/.python_packages/
+~
+~/
 
 # Database files & Runtime caches
 *.db

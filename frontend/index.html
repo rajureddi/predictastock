@@ -5,11 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PredictaStock — Quantitative Market Desk &amp; Portfolio Engine</title>
     <meta name="description" content="PredictaStock Quantitative Market Desk — High-conviction 5-day volatility scenarios, FIFO portfolio engine, and point-in-time backtested strategy lab for Indian equities (NSE/BSE).">
-    <link rel="stylesheet" href="/static/css/terminal.css?v=3.0.0">
+    <link rel="stylesheet" href="/static/css/terminal.css?v=4.0.1">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%2310B981%22 stroke-width=%222.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polyline points=%2222 7 13.5 15.5 8.5 10.5 2 17%22></polyline><polyline points=%2216 7 22 7 22 13%22></polyline></svg>">
     <!-- Chart.js Engine -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Past Data Tester Global Handlers Bridge -->
+    <script>
+        window.switchPastTesterMode = function(mode) {
+            if (typeof window._switchPastTesterMode === "function") {
+                window._switchPastTesterMode(mode);
+            }
+        };
+        window.runSelectedHistoricalTest = function() {
+            if (typeof window.executePastDataTest === "function") {
+                const el = document.getElementById("pastTesterCustomDate");
+                window.executePastDataTest(el ? el.value : null, true);
+            }
+        };
+        window.runRecordedHistoricalRun = function() {
+            if (typeof window.executePastDataTest === "function") {
+                const el = document.getElementById("pastTesterRecordedDropdown");
+                window.executePastDataTest(el ? el.value : null, false);
+            }
+        };
+        window.onPastTesterRecordedSelect = function(val) {
+            if (typeof window.executePastDataTest === "function") {
+                window.executePastDataTest(val, false);
+            }
+        };
+        window.selectAndRunPastTestDate = function(val) {
+            if (typeof window.executePastDataTest === "function") {
+                window.executePastDataTest(val, true);
+            }
+        };
+        window.selectAndRunRecordedPastDate = function(val) {
+            if (typeof window.executePastDataTest === "function") {
+                window.executePastDataTest(val, false);
+            }
+        };
+    </script>
 </head>
 <body>
     <!-- Mobile Sidebar Backdrop Overlay -->
@@ -101,6 +136,15 @@
                         <line x1="16" y1="17" x2="8" y2="17"></line>
                     </svg>
                     <span class="nav-label">Daily Briefing &amp; Reports</span>
+                </div>
+
+                <div class="nav-item" onclick="switchTab('past-tester')" id="nav-btn-past-tester" role="button" tabindex="0">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    <span class="nav-label">Past Data Tester</span>
+                    <span class="nav-badge" style="background: rgba(56, 189, 248, 0.18); color: #38bdf8; font-weight: 700;">SANDBOX</span>
                 </div>
             </nav>
 
@@ -833,22 +877,41 @@
                                 </button>
                             </div>
                         </div>
+
+                        <!-- Explanatory Guide Box for Predicted vs Actual Clarity -->
+                        <div style="background: var(--bg-card); border-left: 3px solid var(--accent-mint); padding: 10px 14px; margin: 10px 0 16px 0; border-radius: var(--radius-sm); font-size: 11.5px; line-height: 1.5; color: var(--text-secondary); display: flex; align-items: flex-start; gap: 10px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-mint)" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                            </svg>
+                            <div>
+                                <strong style="color: var(--text-primary);">How To Read This Audit:</strong>
+                                <span style="color: #cbd5e1; font-weight: 600;">Live CMP</span> is the actual price right now.
+                                <span style="color: var(--accent-mint); font-weight: 600;">Predicted 5D Target</span> is the model's price goal.
+                                <span style="color: #60a5fa; font-weight: 600;">Actual 5D Peak</span> is the highest price the stock reached during the 5-day run (shows <em>Awaiting Entry</em> for new orders).
+                                <strong>Delete individual stocks</strong> using the red trash icon next to each ticker or in the sticky right column.
+                            </div>
+                        </div>
+
                         <div class="table-responsive">
                             <table class="terminal-table">
                                 <thead>
                                     <tr>
                                         <th>Signal Date (T0 &rarr; T5)</th>
-                                        <th>Symbol</th>
+                                        <th>Symbol / Scrip</th>
+                                        <th class="num">Live CMP (Now)</th>
                                         <th class="num">Entry Price (T+1 Open)</th>
-                                        <th class="num">Predicted 5D Target</th>
-                                        <th class="num">Actual 5D Peak</th>
+                                        <th class="num" style="color: var(--accent-mint);">Predicted 5D Target</th>
+                                        <th class="num" style="color: #60a5fa;">Actual 5D Peak</th>
                                         <th class="num">Actual Exit Price</th>
-                                        <th class="num">Net Return % (Post-0.30% Cost)</th>
+                                        <th class="num">Net Return %</th>
                                         <th style="text-align: right;">Audit Verdict</th>
+                                        <th class="col-action-sticky" style="width: 76px;">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody id="paperScorecardTableBody">
-                                    <tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading forward paper trading and verified prediction audit trail...</td></tr>
+                                    <tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading forward paper trading and verified prediction audit trail...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -864,21 +927,23 @@
                             <table class="terminal-table">
                                 <thead>
                                     <tr>
-                                        <th>Symbol</th>
+                                        <th>Symbol / Scrip</th>
                                         <th>Start Date</th>
                                         <th>End Date</th>
+                                        <th class="num">Live CMP (Now)</th>
                                         <th class="num">Ref Price</th>
-                                        <th class="num">Target</th>
+                                        <th class="num" style="color: var(--accent-mint);">Target</th>
                                         <th class="num">Pred %</th>
                                         <th class="num">Actual Close</th>
                                         <th class="num">Actual %</th>
                                         <th class="num">Nifty 50 %</th>
                                         <th class="num">Alpha %</th>
                                         <th>Outcome</th>
+                                        <th class="col-action-sticky" style="width: 76px;">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody id="scorecardTableBody">
-                                    <tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 32px;">Evaluating 5-day session endpoints...</td></tr>
+                                    <tr><td colspan="13" style="text-align: center; color: var(--text-muted); padding: 32px;">Evaluating 5-day session endpoints...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -916,6 +981,190 @@
                         </div>
                         <div class="panel-body" style="padding: 12px;">
                             <iframe id="reportPreviewFrame" style="width: 100%; height: 720px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-surface);"></iframe>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================================
+                     VIEW: PAST DATA PREDICTION TESTER & REALITY CHECK
+                     ======================================================== -->
+                <section id="view-past-tester" class="view-panel">
+                    <div class="panel" style="margin-bottom: 20px;">
+                        <div class="panel-header" style="flex-wrap: wrap; gap: 14px;">
+                            <div>
+                                <span class="panel-title" style="display: flex; align-items: center; gap: 8px;">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #38bdf8;">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <polyline points="12 6 12 12 16 14"></polyline>
+                                    </svg>
+                                    Historical Prediction Reality Check &amp; Backtest Sandbox
+                                </span>
+                                <div class="panel-subtitle">Evaluate past point-in-time predictions and benchmark against what actually happened over the following 5 market sessions.</div>
+                            </div>
+                        </div>
+
+                        <!-- Mode Selector Bar (Present Engine vs Past Archived Runs) -->
+                        <div style="background: rgba(15, 23, 42, 0.7); border-bottom: 1px solid var(--border-subtle); padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;">
+                            <div style="display: flex; align-items: center; gap: 6px; background: rgba(30, 41, 59, 0.6); padding: 3px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                                <button id="tabModePresentEngine" onclick="switchPastTesterMode('present')" class="btn btn-sm" style="height: 28px; font-size: 11.5px; padding: 0 14px; font-weight: 600; border-radius: 4px; background: #38bdf8; color: #020617; border: none; display: flex; align-items: center; gap: 6px; cursor: pointer; transition: all 0.15s ease;">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                                    </svg>
+                                    ⚡ Present Engine (New Calibrated Model)
+                                </button>
+                                <button id="tabModeRecordedPast" onclick="switchPastTesterMode('recorded')" class="btn btn-sm" style="height: 28px; font-size: 11.5px; padding: 0 14px; font-weight: 500; border-radius: 4px; background: transparent; color: var(--text-muted); border: none; display: flex; align-items: center; gap: 6px; cursor: pointer; transition: all 0.15s ease;">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                                    </svg>
+                                    🏛️ Past Prediction Runs (Sealed Historical Database)
+                                </button>
+                            </div>
+                            <div id="pastTesterModeDescription" style="font-size: 11.5px; font-family: var(--font-mono); color: #38bdf8; display: flex; align-items: center; gap: 6px;">
+                                <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #38bdf8;"></span>
+                                <span id="pastTesterModeDescText">Evaluating historical dates with today's new multi-factor calibrated engine</span>
+                            </div>
+                        </div>
+
+                        <!-- Date Selection & Execution Toolbar: Mode 1 - Present Engine -->
+                        <div id="pastTesterPresentControls" style="background: rgba(15, 23, 42, 0.45); border-bottom: 1px solid var(--border-subtle); padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+                            <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+                                <div style="display: flex; flex-direction: column; gap: 4px;">
+                                    <label style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">Quick Presets</label>
+                                    <div id="pastTesterPresetBtns" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                        <!-- Populated dynamically via JS -->
+                                    </div>
+                                </div>
+
+                                <div style="display: flex; flex-direction: column; gap: 4px;">
+                                    <label style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">Or Custom Past Date</label>
+                                    <input type="date" id="pastTesterCustomDate" class="form-control" style="font-size: 12px; height: 32px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0 8px;">
+                                </div>
+
+                                <div style="display: flex; align-items: flex-end; padding-top: 16px;">
+                                    <button class="btn btn-primary" id="btnRunPastTester" onclick="runSelectedHistoricalTest()" style="height: 32px; font-size: 12px; gap: 6px;">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                        </svg>
+                                        <span id="btnRunPastTesterText">Run Present Model Test</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div id="pastTesterRunStatus" style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
+                                <span class="badge" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">STANDBY</span>
+                                Select a date to benchmark prediction vs reality.
+                            </div>
+                        </div>
+
+                        <!-- Date Selection & Execution Toolbar: Mode 2 - Past Archived Runs -->
+                        <div id="pastTesterRecordedControls" style="display: none; background: rgba(15, 23, 42, 0.45); border-bottom: 1px solid var(--border-subtle); padding: 14px 18px; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+                            <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+                                <div style="display: flex; flex-direction: column; gap: 4px;">
+                                    <label style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">Recorded Past Dates</label>
+                                    <div id="pastTesterRecordedPills" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                        <!-- Populated dynamically via JS -->
+                                    </div>
+                                </div>
+
+                                <div style="display: flex; flex-direction: column; gap: 4px;">
+                                    <label style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">All Sealed Runs in Database</label>
+                                    <select id="pastTesterRecordedDropdown" class="form-control" style="font-size: 12px; height: 32px; min-width: 200px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);" onchange="onPastTesterRecordedSelect(this.value)">
+                                        <option value="">Select past run...</option>
+                                    </select>
+                                </div>
+
+                                <div style="display: flex; align-items: flex-end; padding-top: 16px;">
+                                    <button class="btn btn-secondary" id="btnRunRecordedRun" onclick="runRecordedHistoricalRun()" style="height: 32px; font-size: 12px; gap: 6px;">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                            <polyline points="7 10 12 15 17 10"></polyline>
+                                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                                        </svg>
+                                        <span id="btnRunRecordedRunText">Load Sealed Past Run</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div id="pastTesterRecordedRunStatus" style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
+                                <span class="badge" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.3);">SEALED RUNS</span>
+                                Select a date to inspect what was archived in the database.
+                            </div>
+                        </div>
+
+                        <!-- Aggregate Scorecard Banner -->
+                        <div id="pastTesterScorecardBanner" style="padding: 16px 18px; border-bottom: 1px solid var(--border-subtle); display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">5-Day Target Hit Rate</div>
+                                <div id="ptKpiHitRate" style="font-size: 22px; font-weight: 700; color: #38bdf8; margin-top: 4px;">--</div>
+                                <div id="ptKpiHitCount" style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Target reached at peak</div>
+                            </div>
+
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Profitable Close Rate</div>
+                                <div id="ptKpiWinRate" style="font-size: 22px; font-weight: 700; color: var(--color-bullish); margin-top: 4px;">--</div>
+                                <div id="ptKpiWinCount" style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Closed &gt; Entry at Day 5</div>
+                            </div>
+
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Avg Predicted vs Actual Peak</div>
+                                <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 4px;">
+                                    <span id="ptKpiAvgPred" style="font-size: 16px; font-weight: 600; color: var(--text-muted);">--</span>
+                                    <span style="color: var(--text-muted); font-size: 12px;">→</span>
+                                    <span id="ptKpiAvgPeak" style="font-size: 20px; font-weight: 700; color: #38bdf8;">--</span>
+                                </div>
+                                <div id="ptKpiAvgEnd" style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Avg Day-5 Close: --</div>
+                            </div>
+
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Benchmark Return (Nifty 50)</div>
+                                <div id="ptKpiNifty" style="font-size: 22px; font-weight: 700; color: var(--text-primary); margin-top: 4px;">--</div>
+                                <div style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Identical 5-day session interval</div>
+                            </div>
+
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Net Alpha vs Benchmark</div>
+                                <div id="ptKpiAlpha" style="font-size: 22px; font-weight: 700; color: #38bdf8; margin-top: 4px;">--</div>
+                                <div style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Portfolio excess return</div>
+                            </div>
+
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Market Regime &amp; Quality</div>
+                                <div id="ptKpiRegime" style="font-size: 15px; font-weight: 700; color: #f59e0b; margin-top: 6px;">--</div>
+                                <div id="ptKpiAvgProb" style="font-size: 10.5px; color: var(--text-muted); margin-top: 4px;">Avg Win Prob: --</div>
+                            </div>
+                        </div>
+
+                        <!-- Side-by-Side Comparison Table -->
+                        <div class="panel-body" style="padding: 0;">
+                            <div class="table-responsive">
+                                <table class="terminal-table" style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="border-bottom: 1px solid var(--border-subtle); font-size: 11px; text-transform: uppercase; color: var(--text-muted);">
+                                            <th style="padding: 10px 14px; text-align: left;">Stock &amp; Sector</th>
+                                            <th style="padding: 10px 12px; text-align: right;">Past Ref Price</th>
+                                            <th style="padding: 10px 12px; text-align: right;">Predicted 5D Target</th>
+                                            <th style="padding: 10px 12px; text-align: right;">Expected Gain</th>
+                                            <th style="padding: 10px 12px; text-align: center;">Win Prob / Grade</th>
+                                            <th style="padding: 10px 12px; text-align: right; background: rgba(56, 189, 248, 0.04);">Actual Peak Reached</th>
+                                            <th style="padding: 10px 12px; text-align: right; background: rgba(56, 189, 248, 0.04);">Actual Day-5 Close</th>
+                                            <th style="padding: 10px 12px; text-align: center;">Target Reached?</th>
+                                            <th style="padding: 10px 12px; text-align: right;">Variance Gap</th>
+                                            <th style="padding: 10px 14px; text-align: center;">Day-by-Day Path</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="pastTesterTableBody">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 48px 16px;">
+                                                <div style="font-size: 14px; margin-bottom: 6px; font-weight: 600; color: var(--text-primary);">Historical Reality Check Ready</div>
+                                                <div style="font-size: 12px; max-width: 480px; margin: 0 auto;">Select one of the preset buttons above (e.g. 1 Week Ago) or choose any past date to evaluate what the prediction engine forecast and how those stocks actually traded over the following 5 days.</div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </section>
@@ -965,6 +1214,36 @@
                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
                     <button type="button" class="btn btn-secondary" onclick="closeDeleteStockModal()">Cancel</button>
                     <button type="button" class="btn btn-primary" id="btnConfirmDeleteStock" onclick="confirmDeleteStock()" style="background: var(--accent-coral); color: #FFFFFF;">Confirm Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====================================================================
+         MODAL: DELETE RECORD FROM PERFORMANCE LEDGER
+         ==================================================================== -->
+    <div id="deletePerformanceModal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 440px;">
+            <div class="modal-header">
+                <span class="modal-title" style="color: var(--accent-coral); display: flex; align-items: center; gap: 8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                    Delete from Performance Ledger
+                </span>
+                <button class="modal-close-btn" onclick="closeDeletePerformanceModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 13px; color: var(--text-primary); margin-bottom: 12px; line-height: 1.5;">
+                    Are you sure you want to delete <strong id="deletePerformanceModalSymbol" style="color: var(--accent-mint);">STOCK</strong> (<span id="deletePerformanceModalContext" style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px;">Paper Trade</span>) from the performance ledger?
+                </p>
+                <div style="background: var(--accent-coral-bg); border: 1px solid var(--accent-coral-border); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 11.5px; color: var(--accent-coral); margin-bottom: 18px; line-height: 1.45;">
+                    <strong>Action Warning:</strong> This will delete this stock trade evaluation record from the forward audit database. Any allocated paper capital will be restored.
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                    <button type="button" class="btn btn-secondary" onclick="closeDeletePerformanceModal()">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="btnConfirmDeletePerformance" onclick="confirmDeletePerformance()" style="background: var(--accent-coral); color: #FFFFFF;">Confirm Delete</button>
                 </div>
             </div>
         </div>
@@ -1278,6 +1557,6 @@
     <!-- Toast Notification Container -->
     <div id="toastContainer"></div>
 
-    <script src="/static/js/app.js?v=3.0.0"></script>
+    <script src="/static/js/app.js?v=4.0.1"></script>
 </body>
 </html>

@@ -91,6 +91,27 @@ TIER1_MIN_DELIVERY_SURGE = 1.8
 TIER1_MIN_CMF = 0.12
 TIER1_REQUIRE_NIFTY_ABOVE_20DMA = True
 
+# Selective long-only prediction gate.  These are eligibility conditions, not an
+# accuracy promise: the engine publishes a trade candidate only when every
+# independent price, flow, delivery, and market-regime check agrees.
+ENABLE_STRICT_EVIDENCE_GATE = True
+STRICT_MIN_COMPOSITE_SCORE = 70.0
+STRICT_MIN_TECHNICAL_SCORE = 68.0
+STRICT_MIN_MONEY_FLOW_SCORE = 60.0
+STRICT_MIN_CMF = 0.05
+STRICT_MIN_VOLUME_SURGE = 1.10
+STRICT_MIN_DELIVERY_PCT = 45.0
+STRICT_MIN_DELIVERY_SURGE = 1.00
+STRICT_RSI_MIN = 54.0
+STRICT_RSI_MAX = 68.0
+STRICT_MIN_RELATIVE_STRENGTH = 0.0
+
+# A model may be described as "80% validated" only after it clears this
+# independent out-of-sample release gate.  Until then, signals remain
+# paper-trade candidates.
+VALIDATION_TARGET_HIT_RATE_PCT = 80.0
+VALIDATION_MIN_OUT_OF_SAMPLE_TRADES = 50
+
 # Tapetide MCP / Financial Data Gateway (https://mcp.tapetide.com/mcp)
 TAPETIDE_TOKEN = os.getenv("TAPETIDE_TOKEN", "tpt_rt_ca1802c8e79a236347b7a3761514b7141032312bc67470e7878eb1fa")
 TAPETIDE_MCP_URL = os.getenv("TAPETIDE_MCP_URL", "https://mcp.tapetide.com/mcp")

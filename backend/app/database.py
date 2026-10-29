@@ -13,11 +13,11 @@ from app.config import DB_PATH, DATA_DIR
 
 def get_db_connection() -> sqlite3.Connection:
     """Create and return an optimized SQLite connection with WAL mode and multi-worker concurrency hardening."""
-    conn = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
+    conn = sqlite3.connect(str(DB_PATH), timeout=60.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
-    conn.execute("PRAGMA busy_timeout=10000;")
+    conn.execute("PRAGMA busy_timeout=60000;")
     conn.execute("PRAGMA foreign_keys=ON;")
     return conn
 
@@ -344,6 +344,7 @@ def init_db() -> None:
         gross_pnl REAL DEFAULT 0.0,
         net_pnl REAL DEFAULT 0.0,
         net_return_pct REAL DEFAULT 0.0,
+        actual_peak_price REAL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (cohort_id) REFERENCES paper_trading_cohorts(cohort_id)
     );
@@ -463,6 +464,9 @@ def init_db() -> None:
     safe_add_column("recommendations", "deliv_per REAL DEFAULT 45.0")
     safe_add_column("recommendations", "deliv_surge REAL DEFAULT 1.0")
     safe_add_column("recommendations", "rs_20d REAL DEFAULT 0.0")
+    safe_add_column("recommendations", "win_probability_pct REAL DEFAULT 65.0")
+    safe_add_column("recommendations", "reward_to_risk REAL DEFAULT 1.5")
+    safe_add_column("recommendations", "setup_quality TEXT DEFAULT 'A'")
     safe_add_column("recommendations", "ai_thesis TEXT")
     safe_add_column("recommendations", "delivery_source TEXT DEFAULT 'NSE_BHAVCOPY'")
     safe_add_column("forecast_evaluations", "predicted_direction TEXT DEFAULT 'BULLISH'")
@@ -471,6 +475,7 @@ def init_db() -> None:
     safe_add_column("portfolio_transactions", "user_id TEXT DEFAULT 'default_trader'")
     safe_add_column("daily_reports", "delivery_status TEXT DEFAULT 'PENDING'")
     safe_add_column("daily_reports", "recipient_email TEXT")
+    safe_add_column("paper_recommendations", "actual_peak_price REAL")
 
     conn.commit()
     conn.close()

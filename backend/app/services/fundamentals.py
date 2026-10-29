@@ -90,24 +90,30 @@ def fetch_company_fundamentals(symbol: str) -> Dict[str, Any]:
         return _FUNDAMENTALS_CACHE[clean_sym]
 
     # 2. Check database cache
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-    SELECT * FROM company_fundamentals WHERE symbol = ?
-    """, (clean_sym,))
-    row = cursor.fetchone()
-    if row:
-        row_dict = dict(row)
-        # Use DB record if less than 7 days old
-        try:
+    cached_hydrated = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+        SELECT * FROM company_fundamentals WHERE symbol = ?
+        """, (clean_sym,))
+        row = cursor.fetchone()
+        if row:
+            row_dict = dict(row)
             obs_dt = datetime.strptime(row_dict["observation_date"], "%Y-%m-%d").date()
             if (date.today() - obs_dt).days < 7:
-                hydrated = _hydrate_fundamental_metadata(row_dict)
-                _FUNDAMENTALS_CACHE[clean_sym] = hydrated
-                conn.close()
-                return hydrated
+                cached_hydrated = _hydrate_fundamental_metadata(row_dict)
+                _FUNDAMENTALS_CACHE[clean_sym] = cached_hydrated
+        conn.close()
+    except Exception as e:
+        logger.debug(f"Error reading fundamentals cache for {clean_sym}: {e}")
+        try:
+            conn.close()
         except Exception:
             pass
+
+    if cached_hydrated:
+        return cached_hydrated
 
     # 3. Fetch from primary market financial feed
     meta = get_symbol_info(clean_sym)
@@ -260,7 +266,10 @@ def fetch_company_fundamentals(symbol: str) -> Dict[str, Any]:
     }
 
     # Persist into database
+    conn = None
     try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
         cursor.execute("""
         INSERT OR REPLACE INTO company_fundamentals (
             symbol, name, sector, pe_ratio, pb_ratio, roe, roce,
@@ -277,7 +286,11 @@ def fetch_company_fundamentals(symbol: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error persisting fundamentals for {clean_sym}: {e}")
     finally:
-        conn.close()
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     _FUNDAMENTALS_CACHE[clean_sym] = result
     return result

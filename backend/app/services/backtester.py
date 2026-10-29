@@ -17,7 +17,7 @@ import yfinance as yf
 import pandas as pd
 
 from app.database import get_db_connection
-from app.services.market_data import format_ticker_nse, get_stock_history
+from app.services.market_data import format_ticker_nse, get_stock_history, get_latest_quote
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +218,18 @@ def get_forecast_scorecard() -> Dict[str, Any]:
         else "Moderate Sample Size"
     )
 
+    # Decorate top evaluations with current live price for dashboard view
+    for item in completed[:30]:
+        sym = item.get("symbol")
+        if sym:
+            quote = get_latest_quote(sym)
+            item["current_price"] = (
+                round(float(quote["close_price"]), 2)
+                if (quote and quote.get("close_price") is not None)
+                else (item.get("actual_end_price") or item.get("original_reference_price"))
+            )
+            item["current_change_pct"] = round(float(quote.get("day_change_pct") or 0.0), 2) if quote else 0.0
+
     return {
         "total_completed_forecasts": total,
         "pending_forecasts": pending_count,
@@ -232,4 +244,45 @@ def get_forecast_scorecard() -> Dict[str, Any]:
         "status_text": f"Evaluated {total} Forecasts ({sample_significance})",
         "limitations_note": "Directional accuracy requires extensive out-of-sample history across market cycles before asserting statistical edge.",
         "evaluations": completed[:15]
+    }
+
+
+def delete_forecast_evaluation(eval_id: str) -> Dict[str, Any]:
+    """Deletes an individual completed forecast evaluation record by ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, symbol FROM forecast_evaluations WHERE id = ?", (eval_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return {"status": "NOT_FOUND", "deleted": False, "message": f"Evaluation {eval_id} not found."}
+
+    sym = row["symbol"]
+    cursor.execute("DELETE FROM forecast_evaluations WHERE id = ?", (eval_id,))
+    conn.commit()
+    conn.close()
+    return {
+        "status": "SUCCESS",
+        "deleted": True,
+        "deleted_id": eval_id,
+        "symbol": sym,
+        "message": f"Successfully deleted forecast evaluation for {sym}."
+    }
+
+
+def delete_forecast_evaluations_by_symbol(symbol: str) -> Dict[str, Any]:
+    """Deletes all forecast evaluations for a specific symbol."""
+    clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM forecast_evaluations WHERE symbol = ?", (clean_sym,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return {
+        "status": "SUCCESS",
+        "deleted": bool(deleted_count > 0),
+        "deleted_count": deleted_count,
+        "symbol": clean_sym,
+        "message": f"Successfully deleted {deleted_count} forecast evaluation(s) for {clean_sym}."
     }

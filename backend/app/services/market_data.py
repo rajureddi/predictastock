@@ -24,6 +24,8 @@ from app.data.nifty_constituents import NIFTY_UNIVERSE
 
 # Cache of daily prices to avoid hammering endpoints within the same process session
 _DAILY_PRICE_CACHE: Dict[str, Dict[str, Any]] = {}
+_NIFTY_REGIME_CACHE: Dict[str, Dict[str, Any]] = {}
+_STOCK_HISTORY_CACHE: Dict[Tuple[str, str], pd.DataFrame] = {}
 
 # In-memory cache for official NSE EOD Bhavcopy data
 _BHAVCOPY_CACHE: Dict[str, Any] = {"date": None, "data": {}}
@@ -108,9 +110,76 @@ def get_nifty50_live_status() -> Dict[str, Any]:
         }
 
 
+def get_nifty50_regime(as_of_date: Optional[str] = None) -> Dict[str, Any]:
+    """Return the completed-session Nifty regime used by the signal engine.
+
+    ``as_of_date`` makes the same calculation usable for a historical
+    prediction without looking beyond that date.  A missing or short benchmark
+    history is explicit and must not qualify a high-confidence long signal.
+    """
+    cache_key = str(as_of_date)[:10] if as_of_date else "live"
+    if cache_key in _NIFTY_REGIME_CACHE:
+        return dict(_NIFTY_REGIME_CACHE[cache_key])
+
+    try:
+        ticker = yf.Ticker("^NSEI")
+        if as_of_date:
+            as_of = pd.Timestamp(str(as_of_date)[:10]).normalize()
+            history = ticker.history(
+                start=(as_of - pd.Timedelta(days=90)).strftime("%Y-%m-%d"),
+                end=(as_of + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            )
+        else:
+            history = ticker.history(period="6mo")
+
+        history = history.dropna(subset=["Close"])
+        if hasattr(history.index, "tz") and history.index.tz is not None:
+            history.index = history.index.tz_localize(None)
+        if as_of_date:
+            history = history[history.index <= as_of]
+
+        if len(history) < 21:
+            raise ValueError("Need at least 21 completed Nifty sessions")
+
+        close = float(history["Close"].iloc[-1])
+        sma_20 = float(history["Close"].tail(20).mean())
+        return_20d = float(
+            ((history["Close"].iloc[-1] - history["Close"].iloc[-20]) /
+             history["Close"].iloc[-20]) * 100.0
+        )
+        result = {
+            "is_valid": True,
+            "as_of_date": cache_key,
+            "close": round(close, 2),
+            "sma_20": round(sma_20, 2),
+            "return_20d_pct": round(return_20d, 2),
+            "is_bullish": bool(close >= sma_20 and return_20d >= 0.0),
+            "source": "NSE (^NSEI via yfinance)",
+            "error": None,
+        }
+    except Exception as exc:
+        logger.warning("Unable to establish Nifty regime: %s", exc)
+        result = {
+            "is_valid": False,
+            "as_of_date": cache_key,
+            "close": None,
+            "sma_20": None,
+            "return_20d_pct": None,
+            "is_bullish": False,
+            "source": "NSE (^NSEI via yfinance)",
+            "error": str(exc),
+        }
+
+    _NIFTY_REGIME_CACHE[cache_key] = result
+    return dict(result)
+
+
 def get_stock_history(symbol: str, period: str = "6mo") -> pd.DataFrame:
     """Download daily OHLCV dataframe for an NSE stock. Returns empty DataFrame on failure."""
     ticker_str = format_ticker_nse(symbol)
+    cache_key = (ticker_str, period)
+    if cache_key in _STOCK_HISTORY_CACHE:
+        return _STOCK_HISTORY_CACHE[cache_key].copy()
     try:
         ticker = yf.Ticker(ticker_str)
         df = ticker.history(period=period)
@@ -119,7 +188,8 @@ def get_stock_history(symbol: str, period: str = "6mo") -> pd.DataFrame:
             return pd.DataFrame()
         # Drop incomplete NaN rows from market feed
         df = df.dropna(subset=['Close', 'High', 'Low'])
-        return df
+        _STOCK_HISTORY_CACHE[cache_key] = df
+        return df.copy()
     except Exception as e:
         logger.error(f"Error downloading history for {ticker_str}: {e}")
         return pd.DataFrame()
@@ -183,6 +253,7 @@ def get_latest_quote(symbol: str) -> Dict[str, Any]:
             _DAILY_PRICE_CACHE[cache_key] = result
 
             # Phase 2 Multi-Source Price Verification & Audit Trail Persistence
+            conn = None
             try:
                 from app.database import get_db_connection
                 import uuid
@@ -201,9 +272,14 @@ def get_latest_quote(symbol: str) -> Dict[str, Any]:
                     0.0, "VERIFIED", now_str
                 ))
                 conn.commit()
-                conn.close()
             except Exception as e:
                 logger.warning(f"Could not persist price observation for {clean_sym}: {e}")
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
             return result
         else:
@@ -731,13 +807,16 @@ def get_historical_market_bars(symbol: str, lookback_days: int = 90) -> pd.DataF
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
-    SELECT 
-        trading_date, open, high, low, close, volume, 
-        deliv_qty, deliv_per, delivery_source, nifty50_close, nifty50_sma20
-    FROM historical_market_bars
-    WHERE symbol = ?
+    SELECT * FROM (
+        SELECT
+            trading_date, open, high, low, close, volume,
+            deliv_qty, deliv_per, delivery_source, nifty50_close, nifty50_sma20
+        FROM historical_market_bars
+        WHERE symbol = ?
+        ORDER BY trading_date DESC
+        LIMIT ?
+    )
     ORDER BY trading_date ASC
-    LIMIT ?
     """, (clean_sym, lookback_days))
     rows = cursor.fetchall()
     conn.close()

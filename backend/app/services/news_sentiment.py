@@ -99,6 +99,11 @@ def fetch_stock_news_rss(
         except Exception as e:
             logger.warning(f"Error checking historical_news_cache for {clean_sym} on {as_of_str}: {e}")
 
+        # Free RSS providers do not retain deep news archives for historical dates;
+        # avoid slow blocking HTTP requests during historical backtests.
+        if as_of_dt and as_of_dt < (date.today() - timedelta(days=3)):
+            return []
+
     news_items: List[Dict[str, Any]] = []
     seen_titles = set()
 
