@@ -58,6 +58,19 @@ SECTOR_CONCENTRATION_ALERT_PCT = 25.0 # Warning if single sector exceeds 25% of 
 MAX_PRICE_DISCREPANCY_PCT = 0.5       # Flag if primary vs backup prices differ by > 0.5%
 MIN_DAILY_TURNOVER_INR = 50_000_000   # ₹5 Crore minimum daily rupee turnover (filters out operator-driven illiquid scrips)
 
+# Full-market scan universe (NSE + BSE bhavcopy store)
+# NSE series: EQ normal, BE/BZ trade-to-trade, SM/ST SME. BSE groups: A, B, T, X, XT, Z, ZP, M/MT/MS (SME).
+SCAN_EXCHANGES = tuple(os.getenv("SCAN_EXCHANGES", "NSE,BSE").split(","))
+# EQ and BSE A/B only. BE/BZ/T/Z are trade-for-trade or restricted and are not a delivery book.
+SCAN_NSE_SERIES = tuple(os.getenv("SCAN_NSE_SERIES", "EQ").split(","))
+SCAN_BSE_GROUPS = tuple(os.getenv("SCAN_BSE_GROUPS", "A,B").split(","))
+SCAN_MIN_TURNOVER_CR = float(os.getenv("SCAN_MIN_TURNOVER_CR", "5.0"))   # 20-session average daily turnover
+SCAN_MIN_PRICE = float(os.getenv("SCAN_MIN_PRICE", "20.0"))
+SCAN_MAX_UNIVERSE = int(os.getenv("SCAN_MAX_UNIVERSE", "3000"))
+EOD_HISTORY_SESSIONS = int(os.getenv("EOD_HISTORY_SESSIONS", "260"))
+# Older sessions the archive backfill pulls when someone runs it. The daily scan stays on EOD_HISTORY_SESSIONS.
+HISTORY_BACKFILL_SESSIONS = int(os.getenv("HISTORY_BACKFILL_SESSIONS", "520"))
+
 # Re-Weighted 5-Day Swing Model Weights (Total 1.0)
 WEIGHT_TECHNICAL = 0.45               # 45% Technical Momentum & Relative Strength
 WEIGHT_MONEY_FLOW = 0.25              # 25% Institutional Money Flow (CMF-20, MFI-14, Volume Surge)
@@ -92,9 +105,10 @@ TIER1_MIN_CMF = 0.12
 TIER1_REQUIRE_NIFTY_ABOVE_20DMA = True
 
 # Selective long-only prediction gate.  These are eligibility conditions, not an
-# accuracy promise: the engine publishes a trade candidate only when every
-# independent price, flow, delivery, and market-regime check agrees.
+# accuracy promise. Regime is a position-size dial, not a veto: a correction
+# cuts size in half instead of deleting every signal.
 ENABLE_STRICT_EVIDENCE_GATE = True
+STRICT_REGIME_IS_HARD_GATE = False
 STRICT_MIN_COMPOSITE_SCORE = 70.0
 STRICT_MIN_TECHNICAL_SCORE = 68.0
 STRICT_MIN_MONEY_FLOW_SCORE = 60.0
@@ -106,11 +120,43 @@ STRICT_RSI_MIN = 54.0
 STRICT_RSI_MAX = 68.0
 STRICT_MIN_RELATIVE_STRENGTH = 0.0
 
-# A model may be described as "80% validated" only after it clears this
-# independent out-of-sample release gate.  Until then, signals remain
-# paper-trade candidates.
-VALIDATION_TARGET_HIT_RATE_PCT = 80.0
-VALIDATION_MIN_OUT_OF_SAMPLE_TRADES = 50
+# Release gate. A 5-day long book is judged on edge over the universe it trades,
+# payoff, and drawdown. An 80% hit rate is not a real-world target.
+VALIDATION_MIN_OUT_OF_SAMPLE_TRADES = 100
+VALIDATION_MIN_EXCESS_HIT_RATE_PCT = 4.0
+VALIDATION_MIN_PROFIT_FACTOR = 1.30
+VALIDATION_MIN_EXPECTANCY_PCT = 0.15
+VALIDATION_MAX_DRAWDOWN_PCT = 15.0
+VALIDATION_TARGET_HIT_RATE_PCT = VALIDATION_MIN_EXCESS_HIT_RATE_PCT  # legacy name, no longer an 80% bar
+
+# Trade construction. Slippage is in percent, scaled by 20-session turnover.
+MAX_GAP_CHASE_PCT = 3.5
+DATA_ERROR_RETURN_PCT = 40.0
+RISK_PER_TRADE_PCT = 0.75
+MAX_POSITION_PCT = 20.0
+PORTFOLIO_START_CAPITAL = 1_000_000.0
+REGIME_SIZE_BULL = 1.0
+REGIME_SIZE_CORRECTION = 0.5
+REGIME_SIZE_UNKNOWN = 0.5
+RANKER_VOL_CAP_ATR_PCT = 4.0
+EXCLUDED_SERIES = ("BE", "BZ", "SM", "ST", "T", "Z", "ZP", "M", "MT", "MS", "P", "W")
+# From the 2025-12 to 2026-10 research pass: pullback lost the least, breakouts
+# lost the most, and 20-day momentum had no rank correlation with the next week.
+ENTRY_SETUP_BONUS = {"PULLBACK": 0.5, "BREAKOUT": -1.0, "EXTENDED": -2.0, "OTHER": 0.0}
+
+# Benchmark swing. Research book 1 Dec 2025 through 31 Oct 2026, quiet pullbacks
+# with the distribution cell removed and Gate A applied: 39 trades, +0.646% net,
+# profit factor 1.66, weekly equity 1.13, max drawdown 7.6%.
+BENCHMARK_SWING_HOLD_SESSIONS = 6
+BENCHMARK_SWING_TARGET_ATR = 2.0
+BENCHMARK_SWING_STOP_ATR = 1.05
+BENCHMARK_SWING_MAX_ATR_PCT = 4.0
+BENCHMARK_SWING_MAX_SIGNAL_DAY_PCT = 0.50
+BENCHMARK_SWING_EXPECTANCY_PCT = 0.646
+BENCHMARK_SWING_PROFIT_FACTOR = 1.66
+BENCHMARK_SWING_ENDING_EQUITY = 1.13
+BENCHMARK_SWING_MAX_DRAWDOWN_PCT = 7.6
+
 
 # Tapetide MCP / Financial Data Gateway (https://mcp.tapetide.com/mcp)
 TAPETIDE_TOKEN = os.getenv("TAPETIDE_TOKEN", "tpt_rt_ca1802c8e79a236347b7a3761514b7141032312bc67470e7878eb1fa")

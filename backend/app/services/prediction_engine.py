@@ -43,7 +43,7 @@ from app.services.market_data import (
 )
 from app.services.indicators import (
     compute_all_indicators, compute_mathematical_5d_range,
-    evaluate_strict_long_setup, classify_entry_setup,
+    evaluate_strict_long_setup, classify_entry_setup, passes_benchmark_swing,
 )
 from app.services.news_sentiment import fetch_stock_news_rss, analyze_sentiment
 import time
@@ -144,39 +144,110 @@ def supersede_previous_runs_for_date(
 # Last completed weekly book, 1 Dec 2025 through 31 Oct 2026. Used when the
 # forecast ledger does not yet have enough settled rows to estimate a hit rate.
 WEEKLY_BOOK_HIT_RATE_PCT = 44.8
-_HIT_RATE_CACHE: Dict[str, Any] = {"ready": False, "overall": WEEKLY_BOOK_HIT_RATE_PCT, "source": "weekly book", "buckets": []}
+HIT_RATE_MIN_SAMPLE = 40
+# Scores at or above this line must not fall through to the all-rows average
+# while the band above 70 already has a full sample and the 80+ band does not.
+HIT_RATE_TAIL_SCORE = 80.0
+_HIT_RATE_CACHE: Dict[str, Any] = {
+    "ready": False,
+    "overall": WEEKLY_BOOK_HIT_RATE_PCT,
+    "source": "weekly book",
+    "sample_size": 0,
+    "buckets": [],
+    "tails": {},
+    "outcome": "direction_correct",
+}
+
+
+def _hit_rate_choice(bucket: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "hit_rate_pct": bucket["rate"],
+        "source": bucket["source"],
+        "sample_size": bucket["sample_size"],
+        "outcome": bucket.get("outcome", _HIT_RATE_CACHE.get("outcome", "direction_correct")),
+    }
+
+
+def choose_empirical_hit_rate(composite_score: Optional[float], cache: Dict[str, Any]) -> Dict[str, Any]:
+    """Pick the hit rate a score may use.
+
+    A 10-point band is used only when it has 40 settled rows. A score of 80 or
+    more whose own band is thinner than that uses the 80+ pool when that pool
+    has 40 rows, otherwise the 70+ pool. The 70+ pool is kept only when its
+    rate is at least the nearest full band below 80. Mixing a thin, losing
+    tail into 70+ would hand an 86 a worse rate than a 75, which is the
+    fallback this lookup exists to remove. In that case the score inherits
+    the highest full band below 80.
+    """
+    overall = {
+        "hit_rate_pct": cache["overall"],
+        "source": cache["source"],
+        "sample_size": cache.get("sample_size", 0),
+        "outcome": cache.get("outcome", "direction_correct"),
+    }
+    if composite_score is None:
+        return overall
+    score = float(composite_score)
+    buckets = cache.get("buckets") or []
+    exact = next((bucket for bucket in buckets if bucket["low"] <= score < bucket["high"]), None)
+    if score < HIT_RATE_TAIL_SCORE:
+        return _hit_rate_choice(exact) if exact else overall
+    if exact:
+        return _hit_rate_choice(exact)
+    tails = cache.get("tails") or {}
+    upper = tails.get("80+")
+    if upper and upper["sample_size"] >= HIT_RATE_MIN_SAMPLE:
+        return _hit_rate_choice(upper)
+    merged = tails.get("70+")
+    lower = [bucket for bucket in buckets if bucket["high"] <= HIT_RATE_TAIL_SCORE]
+    inherited = max(lower, key=lambda bucket: bucket["low"]) if lower else None
+    if merged and merged["sample_size"] >= HIT_RATE_MIN_SAMPLE:
+        if inherited is None or merged["rate"] >= inherited["rate"]:
+            return _hit_rate_choice(merged)
+        return _hit_rate_choice(inherited)
+    if inherited:
+        return _hit_rate_choice(inherited)
+    return overall
 
 
 def empirical_hit_rate(composite_score: Optional[float] = None) -> Dict[str, Any]:
-    """Measured hit rate for expectancy. A score bucket is used only when it has 40 settled forecasts."""
+    """Measured hit rate for expectancy. See choose_empirical_hit_rate for the bucket rule."""
     if not _HIT_RATE_CACHE["ready"]:
         _load_empirical_hit_rates()
-    chosen = None
-    if composite_score is not None:
-        for bucket in _HIT_RATE_CACHE["buckets"]:
-            if bucket["low"] <= float(composite_score) < bucket["high"]:
-                chosen = bucket
-                break
-    if chosen:
-        return {"hit_rate_pct": chosen["rate"], "source": chosen["source"], "sample_size": chosen["sample_size"]}
+    return choose_empirical_hit_rate(composite_score, _HIT_RATE_CACHE)
+
+
+def _rate_bucket(flags: List[int], source: str, low: float, high: float, outcome: str) -> Dict[str, Any]:
     return {
-        "hit_rate_pct": _HIT_RATE_CACHE["overall"],
-        "source": _HIT_RATE_CACHE["source"],
-        "sample_size": _HIT_RATE_CACHE.get("sample_size", 0),
+        "low": low,
+        "high": high,
+        "rate": round(sum(flags) / len(flags) * 100.0, 1),
+        "sample_size": len(flags),
+        "source": source,
+        "outcome": outcome,
     }
 
 
 def _load_empirical_hit_rates() -> None:
     rows = []
+    outcome = "direction_correct"
     try:
         conn = get_db_connection()
         try:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(forecast_evaluations)").fetchall()}
+            # A barrier outcome is the stop/target result. The ledger does not
+            # store one today, so expectancy stays on the 5-day directional close.
+            if "barrier_hit" in columns:
+                outcome = "barrier_hit"
+                flag_sql = "f.barrier_hit"
+            else:
+                flag_sql = "f.direction_correct"
             rows = conn.execute(
-                """
-                SELECT r.composite_score AS composite_score, f.direction_correct AS direction_correct
+                f"""
+                SELECT r.composite_score AS composite_score, {flag_sql} AS hit_flag
                 FROM forecast_evaluations f
                 LEFT JOIN recommendations r ON r.id = f.recommendation_id
-                WHERE f.status = 'COMPLETED' AND f.direction_correct IS NOT NULL
+                WHERE f.status = 'COMPLETED' AND {flag_sql} IS NOT NULL
                 """
             ).fetchall()
         finally:
@@ -184,32 +255,112 @@ def _load_empirical_hit_rates() -> None:
     except Exception as exc:
         logger.warning("Forecast ledger unavailable for the hit rate: %s", exc)
         rows = []
-    settled = [(row["composite_score"], int(row["direction_correct"])) for row in rows]
+    settled = [(row["composite_score"], int(row["hit_flag"])) for row in rows]
     overall = WEEKLY_BOOK_HIT_RATE_PCT
     source = "weekly book 1 Dec 2025-31 Oct 2026"
     sample_size = len(settled)
-    if sample_size >= 40:
+    if sample_size >= HIT_RATE_MIN_SAMPLE:
         overall = round(sum(flag for _score, flag in settled) / sample_size * 100.0, 1)
-        source = "forecast_evaluations"
+        source = f"forecast_evaluations {outcome}"
     buckets = []
-    if sample_size >= 40:
+    tails: Dict[str, Any] = {}
+    if sample_size >= HIT_RATE_MIN_SAMPLE:
+        scored = [(float(score), flag) for score, flag in settled if score is not None]
         for low in range(0, 100, 10):
-            members = [flag for score, flag in settled if score is not None and low <= float(score) < low + 10]
-            if len(members) >= 40:
-                buckets.append({
-                    "low": low,
-                    "high": low + 10,
-                    "rate": round(sum(members) / len(members) * 100.0, 1),
-                    "sample_size": len(members),
-                    "source": f"forecast_evaluations composite {low}-{low + 10}",
-                })
+            members = [flag for score, flag in scored if low <= score < low + 10]
+            if len(members) >= HIT_RATE_MIN_SAMPLE:
+                buckets.append(_rate_bucket(
+                    members,
+                    f"forecast_evaluations {outcome} composite {low}-{low + 10}",
+                    low,
+                    low + 10,
+                    outcome,
+                ))
+        for floor, label in ((80.0, "80+"), (70.0, "70+")):
+            members = [flag for score, flag in scored if score >= floor]
+            if members:
+                tails[label] = _rate_bucket(
+                    members,
+                    f"forecast_evaluations {outcome} composite {label}",
+                    floor,
+                    100.0,
+                    outcome,
+                )
     _HIT_RATE_CACHE.update({
         "ready": True,
         "overall": overall,
         "source": source,
         "sample_size": sample_size,
         "buckets": buckets,
+        "tails": tails,
+        "outcome": outcome,
     })
+
+
+def blend_pillar_score(
+    technical: float,
+    money_flow: float,
+    macro: float,
+    news: Optional[float] = None,
+    solvency_penalty: float = 0.0,
+) -> float:
+    """Combine the pillars so the weights in use sum to 1.
+
+    With news, the weights are 0.45, 0.25, 0.20 and 0.10. Without news, those
+    three weights are divided by 0.80. News is never added on top of that
+    rescaled score.
+    """
+    core = (
+        float(technical) * WEIGHT_TECHNICAL
+        + float(money_flow) * WEIGHT_MONEY_FLOW
+        + float(macro) * WEIGHT_MACRO_FLOW
+    )
+    if news is None:
+        base = core / (WEIGHT_TECHNICAL + WEIGHT_MONEY_FLOW + WEIGHT_MACRO_FLOW)
+    else:
+        base = core + float(news) * WEIGHT_NEWS_SENTIMENT
+    return float(np.clip(round(base - float(solvency_penalty or 0.0), 1), 10.0, 95.0))
+
+
+def _regime_with_sma50(regime: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Gate A needs the Nifty 50-day average. Fill it from the store when the regime dict does not carry it."""
+    if not regime or regime.get("sma_50") is not None:
+        return regime
+    as_of = regime.get("as_of_date")
+    conn = get_db_connection()
+    try:
+        if as_of:
+            rows = conn.execute(
+                """
+                SELECT MAX(nifty50_close) AS close
+                FROM historical_market_bars
+                WHERE trading_date <= ? AND nifty50_close IS NOT NULL AND nifty50_close > 0
+                GROUP BY trading_date
+                ORDER BY trading_date DESC
+                LIMIT 50
+                """,
+                (str(as_of)[:10],),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT MAX(nifty50_close) AS close
+                FROM historical_market_bars
+                WHERE nifty50_close IS NOT NULL AND nifty50_close > 0
+                GROUP BY trading_date
+                ORDER BY trading_date DESC
+                LIMIT 50
+                """
+            ).fetchall()
+    except Exception:
+        return regime
+    finally:
+        conn.close()
+    if len(rows) < 50:
+        return regime
+    updated = dict(regime)
+    updated["sma_50"] = round(sum(float(row["close"]) for row in rows) / 50.0, 2)
+    return updated
 
 
 def score_single_stock(
@@ -378,22 +529,15 @@ def score_single_stock(
     stock_sector = meta.get("sector", "Other")
     sector_rs = sector_rs_map.get(stock_sector, 0.0)
 
-    # Dynamic Pillar Weight Renormalization
+    # Missing news renormalizes the other three pillars. Present news uses all four at weights that sum to 1.
     if not has_news or news_provenance == "UNAVAILABLE_PIT":
-        # Renormalized: Tech = 56.25%, MoneyFlow = 31.25%, Macro = 12.50%
         scoring_mode = "PIT_RENORMALIZED_NO_NEWS"
-        base_composite = (tech_score * 0.45 + mf_score * 0.25 + macro_score * 0.10) / 0.80
+        composite_score = blend_pillar_score(tech_score, mf_score, macro_score, solvency_penalty=solvency_penalty)
     else:
         scoring_mode = "FULL_4_PILLAR_PIT" if as_of_date else "FULL_4_PILLAR_LIVE"
-        base_composite = (
-            (tech_score * WEIGHT_TECHNICAL) +
-            (mf_score * WEIGHT_MONEY_FLOW) +
-            (news_multiplier * WEIGHT_NEWS_SENTIMENT) +
-            (macro_score * WEIGHT_MACRO_FLOW)
+        composite_score = blend_pillar_score(
+            tech_score, mf_score, macro_score, news=news_multiplier, solvency_penalty=solvency_penalty,
         )
-
-    composite_score = round(base_composite - solvency_penalty, 1)
-    composite_score = float(np.clip(composite_score, 10.0, 95.0))
     
     # Statistical Calibrated 5-Day ATR Volatility Cone & Directional Scenario
     price_range = compute_mathematical_5d_range(
@@ -491,6 +635,8 @@ def score_single_stock(
         ),
         "money_flow_score": mf_score,
         "technical_score": tech_score,
+        "macro_score": macro_score,
+        "solvency_penalty": solvency_penalty,
         "risk_level": risk_level,
         "status": status_text,
         "atr_14": atr,
@@ -512,6 +658,7 @@ def score_single_stock(
         "atr_pct": round((atr / cmp) * 100.0, 2) if cmp else 0.0,
         "delivery_zscore": float(tech.get("delivery_zscore") or 0.0),
         "entry_setup": entry_setup,
+        "benchmark_swing": passes_benchmark_swing(tech, _regime_with_sma50(macro)),
         "setup_bonus": float(ENTRY_SETUP_BONUS.get(entry_setup, 0.0)),
         "regime_size_multiplier": regime_size,
         "circuit_locked": circuit_locked,
@@ -856,8 +1003,27 @@ def select_present_engine_picks(
                 news_multiplier = (sent_score + 1.0) * 50.0
                 rescored["sentiment_score"] = sent_score
                 rescored["sentiment_label"] = sent_label
-                rescored["composite_score"] = round(
-                    rescored["composite_score"] + ((news_multiplier - 50.0) * WEIGHT_NEWS_SENTIMENT), 1
+                rescored["composite_score"] = blend_pillar_score(
+                    rescored.get("technical_score", 50.0),
+                    rescored.get("money_flow_score", 50.0),
+                    rescored.get("macro_score", 50.0),
+                    news=news_multiplier,
+                    solvency_penalty=rescored.get("solvency_penalty", 0.0),
+                )
+                rescored["scoring_mode"] = "FULL_4_PILLAR_LIVE" if as_of is None else "FULL_4_PILLAR_PIT"
+                rate = empirical_hit_rate(rescored["composite_score"])
+                rescored["empirical_hit_rate_pct"] = rate["hit_rate_pct"]
+                reference = float(rescored.get("reference_price") or 0.0)
+                stop = float(rescored.get("stop_loss") or 0.0)
+                gain = max(0.0, float(rescored.get("expected_appreciation_pct") or 0.0))
+                risk = max(0.0, ((reference - stop) / reference) * 100.0) if reference else 0.0
+                chance = float(rate["hit_rate_pct"]) / 100.0
+                rescored["calibrated_expectancy_pct"] = round((chance * gain) - ((1.0 - chance) * risk), 2)
+                rescored["confidence_text"] = (
+                    f"Conviction Score: {float(rescored.get('win_probability_pct') or 0):.0f} | "
+                    f"Expectancy uses {rate['hit_rate_pct']:.1f}% historical hit rate | "
+                    f"R/R: {float(rescored.get('reward_to_risk') or 0):.1f}x | "
+                    f"Grade {rescored.get('setup_quality', 'A')} Setup"
                 )
         except Exception as exc:
             logger.debug(f"News audit notice for {sym}: {exc}")

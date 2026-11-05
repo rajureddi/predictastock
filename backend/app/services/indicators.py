@@ -16,6 +16,7 @@ from app.config import (
     STRICT_MIN_RELATIVE_STRENGTH, STRICT_MIN_TECHNICAL_SCORE,
     STRICT_MIN_VOLUME_SURGE, STRICT_RSI_MAX, STRICT_RSI_MIN,
     ENABLE_STRICT_EVIDENCE_GATE, STRICT_REGIME_IS_HARD_GATE,
+    BENCHMARK_SWING_MAX_ATR_PCT, BENCHMARK_SWING_MAX_SIGNAL_DAY_PCT,
 )
 import pandas as pd
 from typing import Dict, Any, Tuple, Optional
@@ -419,10 +420,9 @@ def compute_all_indicators(
     # 2. Institutional Money Flow Score (0 to 100)
     # -------------------------------------------------------------
     mf_score = 50.0
-    if cmf_20 > 0.15:
-        mf_score += 25    # Strong institutional accumulation
-    elif cmf_20 > 0.05:
-        mf_score += 15    # Moderate accumulation
+    # One accumulation step. A reading above 0.15 does not add a further 10 points.
+    if cmf_20 > 0.05:
+        mf_score += 15
     elif cmf_20 < -0.15:
         mf_score -= 25    # Heavy institutional distribution
     elif cmf_20 < -0.05:
@@ -442,8 +442,16 @@ def compute_all_indicators(
     elif vol_surge < 0.6:
         mf_score -= 10    # Dry volume / lack of interest
 
-    # Institutional delivery surge bonus — STRICTLY enforced: proxy metrics CANNOT qualify for exchange delivery bonus
-    if is_bhavcopy_actual and deliv_surge >= 1.4 and deliv_per >= 48.0:
+    # Delivery surge is not accumulation when CMF is flat or negative on a dull signal day.
+    previous_close = float(close.iloc[-2]) if len(close) >= 2 else 0.0
+    signal_day_return_pct = ((cmp - previous_close) / previous_close) * 100.0 if previous_close > 0 else None
+    distribution_cell = (
+        cmf_20 <= 0.0
+        and signal_day_return_pct is not None
+        and signal_day_return_pct < 0.50
+    )
+    # Institutional delivery surge bonus — proxy metrics cannot qualify.
+    if is_bhavcopy_actual and deliv_surge >= 1.4 and deliv_per >= 48.0 and not distribution_cell:
         mf_score += 8     # Verified exchange delivery accumulation confirmation
     elif is_bhavcopy_actual and deliv_surge < 0.6 and deliv_per < 30.0:
         mf_score -= 5
@@ -496,6 +504,7 @@ def compute_all_indicators(
         "volatility_5d_pct": vol_5d,
         "technical_score": tech_score,
         "money_flow_score": mf_score,
+        "signal_day_return_pct": None if signal_day_return_pct is None else round(float(signal_day_return_pct), 3),
         "signal": signal
     }
 
@@ -561,6 +570,34 @@ def _delivery_zscore(df: pd.DataFrame) -> float:
     if spread <= 0:
         return 0.0
     return round(float((window.iloc[-1] - window.mean()) / spread), 2)
+
+
+def passes_benchmark_swing(tech: Dict[str, Any], regime: Optional[Dict[str, Any]]) -> bool:
+    """Quiet pullback that survived the distribution cell and Gate A.
+
+    ATR at or under 4% of price, signal day under +0.50%, and not the
+    distribution cell (CMF at or below 0 with a delivery surge of at least 1.4).
+    Gate A blocks only a confirmed index downtrend: Nifty under its 50-day
+    average and a negative 20-day Nifty return.
+    """
+    price = float(tech.get("cmp") or 0.0)
+    atr = float(tech.get("atr_14") or 0.0)
+    if price <= 0 or atr <= 0 or (atr / price) * 100.0 > BENCHMARK_SWING_MAX_ATR_PCT:
+        return False
+    day_return = tech.get("signal_day_return_pct")
+    if day_return is None or float(day_return) >= BENCHMARK_SWING_MAX_SIGNAL_DAY_PCT:
+        return False
+    cmf = float(tech.get("cmf_20") or 0.0)
+    if cmf <= 0.0 and float(tech.get("deliv_surge") or 0.0) >= 1.4:
+        return False
+    regime = regime or {}
+    close = regime.get("close")
+    sma_50 = regime.get("sma_50")
+    nifty_return = regime.get("return_20d_pct")
+    if close is not None and sma_50 is not None and nifty_return is not None:
+        if float(close) < float(sma_50) and float(nifty_return) < 0.0:
+            return False
+    return True
 
 
 def classify_entry_setup(tech: Dict[str, Any]) -> str:
