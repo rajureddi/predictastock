@@ -75,19 +75,52 @@ def _hydrate_fundamental_metadata(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-def fetch_company_fundamentals(symbol: str) -> Dict[str, Any]:
+def get_cached_fundamentals(symbol: str, yahoo_ticker: Optional[str] = None) -> Dict[str, Any]:
+    """Stored fundamentals of any age, with no network call. Empty dict when none are stored."""
+    clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
+    store_symbol = f"{clean_sym}.BO" if (yahoo_ticker or "").upper().endswith(".BO") else clean_sym
+    if store_symbol in _FUNDAMENTALS_CACHE:
+        return _FUNDAMENTALS_CACHE[store_symbol]
+    conn = None
+    try:
+        conn = get_db_connection()
+        row = conn.execute("SELECT * FROM company_fundamentals WHERE symbol = ?", (store_symbol,)).fetchone()
+        if not row:
+            return {}
+        hydrated = _hydrate_fundamental_metadata(dict(row))
+        hydrated["symbol"] = clean_sym
+        return hydrated
+    except Exception as e:
+        logger.debug(f"Cached fundamentals unavailable for {clean_sym}: {e}")
+        return {}
+    finally:
+        if conn:
+            conn.close()
+
+
+def yahoo_debt_to_equity(raw: float) -> float:
+    """Yahoo's debtToEquity field is a percent. 9.83 means 0.0983 times equity, not 9.83 times."""
+    return round(float(raw) / 100.0, 4)
+
+
+def fetch_company_fundamentals(
+    symbol: str,
+    yahoo_ticker: Optional[str] = None,
+    company_name: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Fetch verified financial statement metrics for an Indian stock.
     Persists to SQLite database and caches in memory.
     """
     clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
-    ticker_str = format_ticker_nse(clean_sym)
+    ticker_str = (yahoo_ticker or format_ticker_nse(clean_sym)).upper().strip()
+    store_symbol = f"{clean_sym}.BO" if ticker_str.endswith(".BO") else clean_sym
     today_str = date.today().isoformat()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
 
     # 1. Check in-memory cache
-    if clean_sym in _FUNDAMENTALS_CACHE:
-        return _FUNDAMENTALS_CACHE[clean_sym]
+    if store_symbol in _FUNDAMENTALS_CACHE:
+        return _FUNDAMENTALS_CACHE[store_symbol]
 
     # 2. Check database cache
     cached_hydrated = None
@@ -96,14 +129,15 @@ def fetch_company_fundamentals(symbol: str) -> Dict[str, Any]:
         cursor = conn.cursor()
         cursor.execute("""
         SELECT * FROM company_fundamentals WHERE symbol = ?
-        """, (clean_sym,))
+        """, (store_symbol,))
         row = cursor.fetchone()
         if row:
             row_dict = dict(row)
             obs_dt = datetime.strptime(row_dict["observation_date"], "%Y-%m-%d").date()
             if (date.today() - obs_dt).days < 7:
                 cached_hydrated = _hydrate_fundamental_metadata(row_dict)
-                _FUNDAMENTALS_CACHE[clean_sym] = cached_hydrated
+                cached_hydrated["symbol"] = clean_sym
+                _FUNDAMENTALS_CACHE[store_symbol] = cached_hydrated
         conn.close()
     except Exception as e:
         logger.debug(f"Error reading fundamentals cache for {clean_sym}: {e}")
@@ -117,7 +151,10 @@ def fetch_company_fundamentals(symbol: str) -> Dict[str, Any]:
 
     # 3. Fetch from primary market financial feed
     meta = get_symbol_info(clean_sym)
-    company_name = meta.get("name", clean_sym)
+    if company_name and company_name.strip() and company_name.strip().upper() != clean_sym:
+        company_name = company_name.strip()
+    else:
+        company_name = meta.get("name", clean_sym)
     sector = meta.get("sector", "Diversified")
 
     pe_ratio = None
@@ -163,7 +200,7 @@ def fetch_company_fundamentals(symbol: str) -> Dict[str, Any]:
         # Solvency
         de_raw = info.get("debtToEquity")
         if de_raw is not None:
-            debt_to_equity = round(float(de_raw) / 100.0 if de_raw > 10 else float(de_raw), 2)
+            debt_to_equity = yahoo_debt_to_equity(de_raw)
         else:
             missing_metrics.append("Debt-to-Equity")
 
@@ -278,7 +315,7 @@ def fetch_company_fundamentals(symbol: str) -> Dict[str, Any]:
             observation_date, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            clean_sym, company_name, sector, pe_ratio, pb_ratio, roe, roce,
+            store_symbol, company_name, sector, pe_ratio, pb_ratio, roe, roce,
             debt_to_equity, revenue_growth_yoy, operating_margin,
             market_cap_cr, score, result["data_source"], today_str, now_str
         ))
@@ -292,7 +329,7 @@ def fetch_company_fundamentals(symbol: str) -> Dict[str, Any]:
             except Exception:
                 pass
 
-    _FUNDAMENTALS_CACHE[clean_sym] = result
+    _FUNDAMENTALS_CACHE[store_symbol] = result
     return result
 
 

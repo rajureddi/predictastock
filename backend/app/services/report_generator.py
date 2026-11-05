@@ -364,7 +364,7 @@ def generate_morning_report() -> Dict[str, Any]:
     # Section 5: Disclaimer
     pdf.set_font('Helvetica', 'I', 7)
     pdf.set_text_color(100, 116, 139)
-    pdf.multi_cell(0, 3.5, f"Disclaimer: Generated for personal research only. Calculations use mathematical sqrt(5) ATR volatility cones and verified exchange data. Deducts {ROUNDTRIP_FRICTION_PCT}% round-trip delivery friction. Not registered with SEBI as an investment adviser or research analyst.")
+    pdf.multi_cell(0, 3.5, f"Disclaimer: Generated for personal research only. The 5-day band is about 1.73 times the 14-day ATR around the last close. The trade target is separate. Deducts {ROUNDTRIP_FRICTION_PCT}% round-trip delivery friction. Not registered with SEBI as an investment adviser or research analyst.")
 
     pdf_path = REPORTS_DIR / f"report_{today_str}.pdf"
     pdf.output(str(pdf_path))

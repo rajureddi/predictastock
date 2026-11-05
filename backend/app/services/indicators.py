@@ -4,7 +4,7 @@ Calculates institutional indicators: SMA, EMA, RSI, MACD, ATR, CMF, MFI, Volume 
 Generates objective, two-sided 5-day mathematical volatility cones with explicit ATR Stop-Loss.
 Phase 1 & Phase 2 Integrity Rules:
 - NO forced always-positive target formula.
-- Scaled via Brownian diffusion sqrt(5) mean-reverting dynamics (~2.0x ATR).
+- The 5-day band is about 1.73 times the 14-day ATR around the last close.
 - Removal of tautologies (cmp > low_bound is strictly rejected).
 - Money flow integration (Chaikin Money Flow + Volume Surge Ratio).
 - Volatility Contraction Pattern (VCP / Squeeze) identification.
@@ -15,7 +15,7 @@ from app.config import (
     STRICT_MIN_DELIVERY_SURGE, STRICT_MIN_MONEY_FLOW_SCORE,
     STRICT_MIN_RELATIVE_STRENGTH, STRICT_MIN_TECHNICAL_SCORE,
     STRICT_MIN_VOLUME_SURGE, STRICT_RSI_MAX, STRICT_RSI_MIN,
-    ENABLE_STRICT_EVIDENCE_GATE,
+    ENABLE_STRICT_EVIDENCE_GATE, STRICT_REGIME_IS_HARD_GATE,
 )
 import pandas as pd
 from typing import Dict, Any, Tuple, Optional
@@ -345,6 +345,7 @@ def compute_all_indicators(
     )
     deliv_per = deliv_metrics["deliv_per"]
     deliv_surge = deliv_metrics["deliv_surge"]
+    delivery_zscore = _delivery_zscore(df)
     deliv_source = deliv_metrics["deliv_source"]
     delivery_source = deliv_metrics.get("delivery_source", "SYNTHETIC_PROXY")
     is_bhavcopy_actual = deliv_metrics["is_bhavcopy_actual"]
@@ -486,6 +487,7 @@ def compute_all_indicators(
         "rs_20d": rs_20d,
         "deliv_per": deliv_per,
         "deliv_surge": deliv_surge,
+        "delivery_zscore": delivery_zscore,
         "deliv_source": deliv_source,
         "delivery_source": delivery_source,
         "is_bhavcopy_actual": is_bhavcopy_actual,
@@ -530,15 +532,60 @@ def evaluate_strict_long_setup(
         "solvency": float(solvency_penalty) <= 0.0,
     }
     failed_checks = [name for name, passed in checks.items() if not passed]
-    is_eligible = (not failed_checks) if ENABLE_STRICT_EVIDENCE_GATE else True
+    blocking = [
+        name for name in failed_checks
+        if name != "nifty_regime" or STRICT_REGIME_IS_HARD_GATE
+    ]
+    is_eligible = (not blocking) if ENABLE_STRICT_EVIDENCE_GATE else True
     return {
         "is_eligible": is_eligible,
         "checks": checks,
-        "check_count": len(checks) - len(failed_checks),
+        "check_count": len(checks) - len(blocking),
         "total_checks": len(checks),
-        "failed_checks": failed_checks,
+        "failed_checks": blocking,
+        "soft_failed_checks": [name for name in failed_checks if name not in blocking],
         "gate_bypassed": not ENABLE_STRICT_EVIDENCE_GATE,
     }
+
+
+def _delivery_zscore(df: pd.DataFrame) -> float:
+    """Delivery percent versus the stock's own trailing 60 sessions. 0 when unverified."""
+    column = next((name for name in ("deliv_per", "DELIV_PER") if name in df.columns), None)
+    if column is None:
+        return 0.0
+    series = pd.to_numeric(df[column], errors="coerce").dropna()
+    window = series.tail(60)
+    if len(window) < 20:
+        return 0.0
+    spread = float(window.std())
+    if spread <= 0:
+        return 0.0
+    return round(float((window.iloc[-1] - window.mean()) / spread), 2)
+
+
+def classify_entry_setup(tech: Dict[str, Any]) -> str:
+    """Pullback in an uptrend, fresh breakout, or an already-extended print."""
+    cmp = float(tech.get("cmp") or 0.0)
+    sma_20 = float(tech.get("sma_20") or 0.0)
+    sma_50 = float(tech.get("sma_50") or 0.0)
+    if cmp <= 0 or sma_20 <= 0:
+        return "OTHER"
+    extension = (cmp - sma_20) / sma_20
+    uptrend = sma_50 <= 0 or (cmp >= sma_50 and sma_20 >= sma_50)
+    if uptrend and 0.0 <= extension <= 0.015 and float(tech.get("cmf_20") or 0.0) > 0.0 and 45.0 <= float(tech.get("rsi_14") or 0.0) <= 62.0:
+        return "PULLBACK"
+    resistance = float(tech.get("resistance") or 0.0)
+    if (
+        uptrend
+        and resistance > 0
+        and cmp >= resistance * 0.995
+        and float(tech.get("vol_surge") or 0.0) >= 1.3
+        and extension <= 0.045
+    ):
+        return "BREAKOUT"
+    if bool(tech.get("is_overextended")) or extension > 0.045:
+        return "EXTENDED"
+    return "OTHER"
 
 
 def compute_mathematical_5d_range(
@@ -559,7 +606,9 @@ def compute_mathematical_5d_range(
     deliv_per: float = 40.0,
     deliv_surge: float = 1.0,
     is_vcp_squeeze: bool = False,
-    sma_50: float = 0.0
+    sma_50: float = 0.0,
+    delivery_zscore: float = 0.0,
+    empirical_hit_rate: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Statistical Multi-Factor 5-Day Calibrated Prediction Engine:
@@ -572,8 +621,8 @@ def compute_mathematical_5d_range(
     2. Resistance Ceiling Anchoring: Targets are anchored right below overhead 20-day swing resistance
        (98.5% of resistance level) so profit is locked before hitting institutional supply.
     3. Overextension Gatekeeper: Rejects stocks > 4.5% above 20-DMA to prevent buying exhausted rally tops.
-    4. Calibrated Win Probability: Multi-factor scoring (RS, CMF, Volume Surge, Delivery %, VCP, Macro)
-       generating an explicit 15% - 92% win probability and Reward/Risk ratio.
+    4. Conviction score: the same multi-factor points, clipped from 15 to 92.
+       It is a ranking score. Expectancy uses the measured hit rate, not this score.
     """
     if cmp <= 0:
         return {
@@ -606,19 +655,20 @@ def compute_mathematical_5d_range(
     is_overextended = bool(extension_pct > 0.045)
     
     # -------------------------------------------------------------
-    # 1. Calibrated Statistical Win Probability (0% to 100%)
+    # 1. Conviction score, clipped from 15 to 92. This is not a win probability.
     # -------------------------------------------------------------
     win_prob = 50.0
     
-    # Factor A: Relative Strength vs Nifty 50 (Strongest swing predictor)
+    # Factor A: Relative strength vs Nifty. Halved after the 2025-26 research pass
+    # found 20-day momentum had no rank correlation with the next week.
     if rs_20d > 4.0:
-        win_prob += 12.0
-    elif rs_20d > 0.0:
         win_prob += 6.0
+    elif rs_20d > 0.0:
+        win_prob += 3.0
     elif rs_20d < -4.0:
-        win_prob -= 10.0
+        win_prob -= 6.0
     else:
-        win_prob -= 5.0
+        win_prob -= 3.0
         
     # Factor B: Institutional Accumulation (Chaikin Money Flow 20)
     if cmf_20 > 0.10:
@@ -658,6 +708,12 @@ def compute_mathematical_5d_range(
     if deliv_surge >= 1.3 and deliv_per >= 48.0:
         win_prob += 5.0
 
+    # Factor J: Delivery percent against this stock's own history, not a fixed 45% bar.
+    if delivery_zscore >= 1.5 and cmf_20 > 0.0:
+        win_prob += 4.0
+    elif delivery_zscore <= -1.5:
+        win_prob -= 4.0
+
     # Factor I: Explicit Multi-Indicator Signal Alignment
     has_bullish_signal = "Bullish" in str(signal) or (isinstance(signal, (int, float)) and signal > 0)
     has_bearish_signal = "Bearish" in str(signal) or (isinstance(signal, (int, float)) and signal < 0)
@@ -691,14 +747,13 @@ def compute_mathematical_5d_range(
         target_price = round(cmp + calibrated_move, 2)
 
     expected_pct = round(((target_price - cmp) / cmp) * 100.0, 2)
-    
-    # Statistical boundary guardrails: minimum +1.2%, maximum +5.2% for 5-day horizon
-    if expected_pct < 1.2:
-        target_price = round(cmp * 1.015, 2)
-        expected_pct = 1.5
-    elif expected_pct > 5.2:
-        target_price = round(cmp * 1.045, 2)
-        expected_pct = 4.5
+
+    # Cap the published 5-day target. Do not invent a minimum target: a 0.6% ATR
+    # move is not a 1.5% prediction, and the old floor let every name pass the
+    # 1.2% fallback screen.
+    if expected_pct > 5.2:
+        target_price = round(cmp * 1.052, 2)
+        expected_pct = 5.2
 
     # Stop Loss & Risk/Reward:
     stop_risk = safe_atr * (0.85 if not is_macro_bullish else 1.05)
@@ -706,9 +761,10 @@ def compute_mathematical_5d_range(
     stop_loss = round(max(cmp - (stop_risk * 1.15), sup_ref if sup_ref > (cmp - stop_risk * 1.25) else (cmp - stop_risk)), 2)
     reward_to_risk = round((target_price - cmp) / max(cmp - stop_loss, 0.01), 2)
 
-    # Net Mathematical Calibrated Expectancy Calculation:
-    # Expectancy = (P_win * Gain%) - ((1 - P_win) * Risk%)
-    p_win_fraction = win_prob / 100.0
+    # Expectancy uses the measured hit rate. The conviction score stays out of this product.
+    hit_rate = 44.8 if empirical_hit_rate is None else float(empirical_hit_rate)
+    hit_rate = max(0.0, min(100.0, hit_rate))
+    p_win_fraction = hit_rate / 100.0
     gain_pct = max(0.0, ((target_price - cmp) / cmp) * 100.0) if cmp > 0 else 0.0
     risk_pct = max(0.0, ((cmp - stop_loss) / cmp) * 100.0) if cmp > 0 else 0.0
     calibrated_expectancy_pct = round((p_win_fraction * gain_pct) - ((1.0 - p_win_fraction) * risk_pct), 2)
@@ -765,6 +821,8 @@ def compute_mathematical_5d_range(
         "direction": direction,
         "action_label": action_label,
         "win_probability_pct": win_prob,
+        "conviction_score": win_prob,
+        "empirical_hit_rate_pct": round(hit_rate, 1),
         "reward_to_risk": reward_to_risk,
         "setup_quality": setup_quality,
         "scenario_type": f"5-Day Calibrated Volatility Cone ({direction})"

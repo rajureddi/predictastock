@@ -1,50 +1,14 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PredictaStock — Quantitative Market Desk &amp; Portfolio Engine</title>
-    <meta name="description" content="PredictaStock Quantitative Market Desk — High-conviction 5-day volatility scenarios, FIFO portfolio engine, and point-in-time backtested strategy lab for Indian equities (NSE/BSE).">
-    <link rel="stylesheet" href="/static/css/terminal.css?v=4.0.1">
+    <title>PredictaStock - Market Desk</title>
+    <meta name="description" content="PredictaStock market desk: high-conviction 5-day volatility scenarios, FIFO portfolio engine, and point-in-time backtested strategy lab for Indian equities (NSE/BSE).">
+    <link rel="stylesheet" href="/static/css/terminal.css?v=5.6.1">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%2310B981%22 stroke-width=%222.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polyline points=%2222 7 13.5 15.5 8.5 10.5 2 17%22></polyline><polyline points=%2216 7 22 7 22 13%22></polyline></svg>">
     <!-- Chart.js Engine -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <!-- Past Data Tester Global Handlers Bridge -->
-    <script>
-        window.switchPastTesterMode = function(mode) {
-            if (typeof window._switchPastTesterMode === "function") {
-                window._switchPastTesterMode(mode);
-            }
-        };
-        window.runSelectedHistoricalTest = function() {
-            if (typeof window.executePastDataTest === "function") {
-                const el = document.getElementById("pastTesterCustomDate");
-                window.executePastDataTest(el ? el.value : null, true);
-            }
-        };
-        window.runRecordedHistoricalRun = function() {
-            if (typeof window.executePastDataTest === "function") {
-                const el = document.getElementById("pastTesterRecordedDropdown");
-                window.executePastDataTest(el ? el.value : null, false);
-            }
-        };
-        window.onPastTesterRecordedSelect = function(val) {
-            if (typeof window.executePastDataTest === "function") {
-                window.executePastDataTest(val, false);
-            }
-        };
-        window.selectAndRunPastTestDate = function(val) {
-            if (typeof window.executePastDataTest === "function") {
-                window.executePastDataTest(val, true);
-            }
-        };
-        window.selectAndRunRecordedPastDate = function(val) {
-            if (typeof window.executePastDataTest === "function") {
-                window.executePastDataTest(val, false);
-            }
-        };
-    </script>
 </head>
 <body>
     <!-- Mobile Sidebar Backdrop Overlay -->
@@ -65,9 +29,8 @@
                     <div class="brand-info">
                         <div class="brand-name">
                             <span>PredictaStock</span>
-                            <span class="brand-tag">STUDIO</span>
                         </div>
-                        <span class="brand-sub">QUANT DESK</span>
+                        <span class="brand-sub">NSE + BSE desk</span>
                     </div>
                 </a>
                 <button class="sidebar-collapse-btn" id="sidebarToggleBtn" onclick="toggleSidebarCollapse()" title="Collapse / Expand Sidebar" aria-label="Toggle Sidebar">
@@ -79,7 +42,7 @@
 
             <!-- Navigation Links -->
             <nav class="sidebar-nav">
-                <div class="nav-section-label">DESK &amp; SETUPS</div>
+                <div class="nav-section-label">Desk</div>
                 
                 <div class="nav-item active" onclick="switchTab('charts')" id="nav-btn-charts" role="button" tabindex="0">
                     <svg class="nav-icon" viewBox="0 0 24 24">
@@ -88,7 +51,6 @@
                         <line x1="9" y1="21" x2="9" y2="9"></line>
                     </svg>
                     <span class="nav-label">Market Desk</span>
-                    <span class="nav-badge">LIVE</span>
                 </div>
 
                 <div class="nav-item" onclick="switchTab('recs')" id="nav-btn-recs" role="button" tabindex="0">
@@ -99,7 +61,7 @@
                     <span class="nav-badge" id="sidebarRecCount">5</span>
                 </div>
 
-                <div class="nav-section-label">ASSETS &amp; RISK</div>
+                <div class="nav-section-label">Portfolio</div>
 
                 <div class="nav-item" onclick="switchTab('portfolio')" id="nav-btn-portfolio" role="button" tabindex="0">
                     <svg class="nav-icon" viewBox="0 0 24 24">
@@ -117,7 +79,7 @@
                     <span class="nav-label">Sector Allocation &amp; Risk</span>
                 </div>
 
-                <div class="nav-section-label">INTELLIGENCE &amp; AUDIT</div>
+                <div class="nav-section-label">Research</div>
 
                 <div class="nav-item" onclick="switchTab('scorecard')" id="nav-btn-scorecard" role="button" tabindex="0">
                     <svg class="nav-icon" viewBox="0 0 24 24">
@@ -138,22 +100,17 @@
                     <span class="nav-label">Daily Briefing &amp; Reports</span>
                 </div>
 
-                <div class="nav-item" onclick="switchTab('past-tester')" id="nav-btn-past-tester" role="button" tabindex="0">
+                <div class="nav-item" onclick="switchTab('weekly-backtest')" id="nav-btn-weekly-backtest" role="button" tabindex="0">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <polyline points="12 6 12 12 16 14"></polyline>
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                     </svg>
-                    <span class="nav-label">Past Data Tester</span>
-                    <span class="nav-badge" style="background: rgba(56, 189, 248, 0.18); color: #38bdf8; font-weight: 700;">SANDBOX</span>
+                    <span class="nav-label">Weekly Backtest</span>
                 </div>
             </nav>
 
             <!-- Factor Synthesis Action Block -->
             <div class="sidebar-copilot-box">
-                <div style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.04em;">
-                    Multi-Factor Synthesis
-                </div>
-                <button class="btn btn-secondary btn-sm" style="width: 100%; justify-content: center; font-size: 11px;" onclick="openDebateModalFromChart()">
+                <button class="btn btn-secondary btn-sm" style="width: 100%; justify-content: center;" onclick="openDebateModalFromChart()">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
                         <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
                         <polyline points="2 17 12 22 22 17"></polyline>
@@ -180,19 +137,19 @@
                         </svg>
                     </span>
                     <div class="theme-text-block">
-                        <span id="sidebarThemeLabel" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">Dark Studio</span>
+                        <span id="sidebarThemeLabel" style="font-size: 13px; color: var(--text-secondary);">Dark theme</span>
                     </div>
                 </div>
-                <span class="theme-toggle-pill" id="sidebarThemePill">DARK</span>
+                <span class="theme-toggle-pill" id="sidebarThemePill" hidden></span>
             </div>
 
             <!-- Sidebar Footer -->
             <div class="sidebar-footer">
                 <div class="market-pulse-box">
                     <span class="pulse-dot" id="marketPulseDot"></span>
-                    <span class="market-status-text" id="marketStatusText">NSE REALTIME</span>
+                    <span class="market-status-text" id="marketStatusText">NSE session</span>
                 </div>
-                <span id="marketSessionStatus" style="font-family: var(--font-mono); color: var(--accent-mint); font-weight: 700;">OPEN</span>
+                <span id="marketSessionStatus" style="font-size: 12px; color: var(--text-secondary);">Open</span>
             </div>
         </aside>
 
@@ -209,30 +166,30 @@
                         </svg>
                     </button>
 
-                    <h1 class="view-heading" id="currentViewTitle">MARKET DESK</h1>
+                    <h1 class="view-heading" id="currentViewTitle">Market Desk</h1>
                     
                     <!-- Market Indices Ticker Strip -->
                     <div class="indices-ticker-strip">
                         <div class="index-pill" id="pillNifty">
-                            <span class="index-name">NIFTY 50</span>
+                            <span class="index-name">Nifty 50</span>
                             <span class="index-price tabular-nums" id="niftyPrice">--</span>
                             <span class="index-change tabular-nums" id="niftyChange">--</span>
                         </div>
                         <div class="index-pill" id="pillVix">
-                            <span class="index-name">INDIA VIX</span>
+                            <span class="index-name">India VIX</span>
                             <span class="index-price tabular-nums" id="vixVal">--</span>
                             <span class="index-change tabular-nums" id="vixChange">--</span>
                         </div>
                         <div class="index-pill" id="pillTapetide" onclick="openIntegrationsModal()" title="Tapetide Financial Intelligence MCP & Broker Gateway (Dhan / Upstox)" style="cursor: pointer;">
-                            <span class="index-name" style="color: var(--accent-indigo); display: flex; align-items: center; gap: 5px;">
-                                <span id="tapetideStatusDot" style="width: 7px; height: 7px; border-radius: 50%; background: var(--accent-mint); display: inline-block;"></span>
-                                TAPETIDE MCP
+                            <span class="index-name" style="display: flex; align-items: center; gap: 6px;">
+                                <span id="tapetideStatusDot" style="width: 6px; height: 6px; border-radius: 50%; background: var(--gain); display: inline-block;"></span>
+                                Tapetide
                             </span>
-                            <span class="index-price tabular-nums" id="tapetideQuotaDisplay" style="font-size: 10px; font-family: var(--font-mono); color: var(--accent-mint);">45/50 FREE</span>
+                            <span class="index-price tabular-nums" id="tapetideQuotaDisplay">45/50 FREE</span>
                         </div>
                         <div class="index-pill session-cutoff-pill">
-                            <span class="index-name" style="color: var(--accent-mint);">SESSION CUTOFF</span>
-                            <span class="index-price" style="font-size: 10.5px; font-family: var(--font-mono);">16:00 IST</span>
+                            <span class="index-name">Cutoff</span>
+                            <span class="index-price tabular-nums">16:00 IST</span>
                         </div>
                     </div>
                 </div>
@@ -245,9 +202,10 @@
                             <circle cx="11" cy="11" r="8"></circle>
                             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                         </svg>
-                        <input list="stockUniverseList" id="globalStockSearch" class="global-search-input" placeholder="Search stocks... ⌘K" autocomplete="off" onchange="onGlobalStockSelect(this.value)" aria-label="Search Equities">
+                        <input id="globalStockSearch" class="global-search-input" placeholder="Symbol or company..." autocomplete="off" aria-label="Search NSE and BSE equities" aria-autocomplete="list" aria-controls="globalSearchResults" aria-expanded="false">
+                        <div id="globalSearchResults" class="search-results-panel" role="listbox" hidden></div>
                         <datalist id="stockUniverseList"></datalist>
-                        <span class="search-kbd-shortcut">⌘K</span>
+                        <span class="search-kbd-shortcut">Ctrl K</span>
                     </div>
 
                     <button class="btn btn-primary btn-sm" onclick="openTransactionModal()" title="Record Trade (FIFO)">
@@ -355,7 +313,7 @@
                                         </div>
 
                                         <!-- Forecast Toggle -->
-                                        <button class="btn btn-secondary btn-sm" id="btnToggleForecast" onclick="toggleForecastProjection()" style="font-size: 10.5px;">
+                                        <button class="btn btn-secondary btn-sm" id="btnToggleForecast" onclick="toggleForecastProjection()" style="font-size: 12px;">
                                             5D Forecast Cone: ON
                                         </button>
                                     </div>
@@ -380,19 +338,19 @@
                                 <!-- Technical Indicators & Valuation Grid -->
                                 <div class="tech-fund-grid" id="chartTechFundamentalsGrid">
                                     <div class="indicator-unit">
-                                        <span class="ind-label">5D EXPECTED GAIN</span>
+                                        <span class="ind-label">5-day expected gain</span>
                                         <span class="ind-value up" id="panelGain">--</span>
                                     </div>
                                     <div class="indicator-unit">
-                                        <span class="ind-label">EXPECTED RANGE</span>
+                                        <span class="ind-label">Expected range</span>
                                         <span class="ind-value" id="panelRange">--</span>
                                     </div>
                                     <div class="indicator-unit">
-                                        <span class="ind-label">DYNAMIC SUPPORT</span>
+                                        <span class="ind-label">Support</span>
                                         <span class="ind-value" id="panelSupport">--</span>
                                     </div>
                                     <div class="indicator-unit">
-                                        <span class="ind-label">DYNAMIC RESISTANCE</span>
+                                        <span class="ind-label">Resistance</span>
                                         <span class="ind-value" id="panelResistance">--</span>
                                     </div>
                                     <div class="indicator-unit">
@@ -404,7 +362,7 @@
                                         <span class="ind-value" id="panelROE">--</span>
                                     </div>
                                     <div class="indicator-unit">
-                                        <span class="ind-label">DEBT / EQUITY</span>
+                                        <span class="ind-label">Debt / equity</span>
                                         <span class="ind-value" id="panelDE">--</span>
                                     </div>
                                     <div class="indicator-unit">
@@ -420,8 +378,8 @@
                             <!-- Forward Setup Card -->
                             <div class="ai-prediction-panel">
                                 <div class="ai-panel-header">
-                                    <span class="ai-badge">5-DAY VOLATILITY SCENARIO</span>
-                                    <span style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted);" id="aiDataFreshness">T+5 FORWARD</span>
+                                    <span class="ai-badge">5-day volatility scenario</span>
+                                    <span style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted);" id="aiDataFreshness">T+5 forward</span>
                                 </div>
                                 <div class="ai-prediction-metrics">
                                     <div class="prediction-highlight-card">
@@ -439,7 +397,7 @@
                                         <div class="pred-meta-item">
                                             <div class="pred-meta-label">Model Direction</div>
                                             <div class="pred-meta-val" id="aiStanceContainer">
-                                                <span class="stance-pill bull" id="aiStanceBadge">BULLISH</span>
+                                                <span class="stance-pill bull" id="aiStanceBadge">Bullish</span>
                                             </div>
                                         </div>
                                         <div class="pred-meta-item">
@@ -457,7 +415,7 @@
                                     </div>
 
                                     <div class="ai-disclaimer-box">
-                                        <strong>Statistical Disclosure:</strong> Forward scenarios are calibrated with 14-day Brownian volatility envelopes. Probabilistic estimates, not guaranteed outcomes.
+                                        <strong>Statistical Disclosure:</strong> The 5-day band is about 1.73 times the 14-day ATR around the last close. The trade target is separate and can sit just under the 20-day high. The conviction score is not a win probability.
                                     </div>
                                 </div>
                             </div>
@@ -466,9 +424,9 @@
                             <div class="watchlist-panel">
                                 <div class="watchlist-header">
                                     <span style="font-size: 11.5px; font-weight: 700; color: var(--text-primary); font-family: var(--font-mono);">
-                                        WATCHLIST (NIFTY LEADERS)
+                                        Watchlist (Nifty leaders)
                                     </span>
-                                    <span style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">CLICK TO LOAD</span>
+                                    <span style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Click to load</span>
                                 </div>
                                 <div class="watchlist-list" id="watchlistContainer">
                                     <!-- Populated dynamically -->
@@ -560,8 +518,9 @@
                             </div>
                         </div>
                         <div id="recsGrid" class="rec-grid panel-body">
-                            <div style="padding: 30px; text-align: center; color: var(--text-muted); grid-column: 1 / -1;">
-                                Loading quantitative market setups...
+                            <div class="ps-orb-block" style="grid-column: 1 / -1;">
+                                <span class="ps-orb" data-orb="working" data-orb-size="64" aria-hidden="true"></span>
+                                Loading market setups...
                             </div>
                         </div>
                     </div>
@@ -743,7 +702,7 @@
                     <div class="strategy-evidence-banner">
                         <div class="strategy-evidence-header">
                             <div>
-                                <span style="font-weight: 800; color: var(--accent-mint); font-size: 13px; font-family: var(--font-mono); letter-spacing: 0.5px;">
+                                <span style="font-weight: 600; color: var(--accent-mint); font-size: 13px; font-family: var(--font-mono);">
                                     STRATEGY HYPOTHESIS &amp; AUDIT EVIDENCE LEDGER
                                 </span>
                                 <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 3px;">
@@ -751,8 +710,8 @@
                                 </div>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
-                                <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">AUDIT STATUS:</span>
-                                <span id="evidenceVerdictBadge" class="badge-verdict-inconclusive">AWAITING T+5 SETTLEMENT</span>
+                                <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">Audit status:</span>
+                                <span id="evidenceVerdictBadge" class="badge-verdict-inconclusive">Awaiting T+5 settlement</span>
                             </div>
                         </div>
 
@@ -774,7 +733,7 @@
                             </div>
                             <div class="strategy-evidence-col">
                                 <div class="evidence-title">4. PIT Data Provenance</div>
-                                <div class="evidence-stat" style="font-size: 13px; color: var(--accent-mint); font-family: var(--font-mono); font-weight: 700;">45D FILING LAG + RENORMALIZED</div>
+                                <div class="evidence-stat" style="font-size: 13px; color: var(--accent-mint); font-family: var(--font-mono); font-weight: 700;">45-day filing lag, renormalized</div>
                                 <div class="evidence-note">SEBI LODR 45D filing lag &bull; Date-bounded news &bull; Zero look-ahead bias</div>
                             </div>
                         </div>
@@ -849,8 +808,9 @@
                                     </thead>
                                     <tbody id="backtestBaselinesTableBody">
                                         <tr id="backtestLoadingRow">
-                                            <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 24px; font-family: var(--font-mono);">
-                                                Loading verified point-in-time backtest evidence against 3 zero-alpha baselines...
+                                            <td colspan="8" class="ps-orb-block">
+                                                <span class="ps-orb" data-orb="working" data-orb-size="64" aria-hidden="true"></span>
+                                                Loading point-in-time backtest evidence against 3 baselines...
                                             </td>
                                         </tr>
                                     </tbody>
@@ -887,9 +847,9 @@
                             </svg>
                             <div>
                                 <strong style="color: var(--text-primary);">How To Read This Audit:</strong>
-                                <span style="color: #cbd5e1; font-weight: 600;">Live CMP</span> is the actual price right now.
+                                <span style="color: var(--text-primary); font-weight: 600;">Live CMP</span> is the actual price right now.
                                 <span style="color: var(--accent-mint); font-weight: 600;">Predicted 5D Target</span> is the model's price goal.
-                                <span style="color: #60a5fa; font-weight: 600;">Actual 5D Peak</span> is the highest price the stock reached during the 5-day run (shows <em>Awaiting Entry</em> for new orders).
+                                <span style="color: var(--accent); font-weight: 600;">Actual 5D Peak</span> is the highest price the stock reached during the 5-day run (shows <em>Awaiting Entry</em> for new orders).
                                 <strong>Delete individual stocks</strong> using the red trash icon next to each ticker or in the sticky right column.
                             </div>
                         </div>
@@ -903,7 +863,7 @@
                                         <th class="num">Live CMP (Now)</th>
                                         <th class="num">Entry Price (T+1 Open)</th>
                                         <th class="num" style="color: var(--accent-mint);">Predicted 5D Target</th>
-                                        <th class="num" style="color: #60a5fa;">Actual 5D Peak</th>
+                                        <th class="num" style="color: var(--accent);">Actual 5D Peak</th>
                                         <th class="num">Actual Exit Price</th>
                                         <th class="num">Net Return %</th>
                                         <th style="text-align: right;">Audit Verdict</th>
@@ -911,7 +871,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="paperScorecardTableBody">
-                                    <tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading forward paper trading and verified prediction audit trail...</td></tr>
+                                    <tr><td colspan="10" class="ps-orb-block"><span class="ps-orb" data-orb="working" data-orb-size="64" aria-hidden="true"></span>Loading paper trades and the prediction audit trail...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -986,180 +946,106 @@
                 </section>
 
                 <!-- ========================================================
-                     VIEW: PAST DATA PREDICTION TESTER & REALITY CHECK
+                     VIEW: WEEKLY LIVE-ENGINE BACKTEST
                      ======================================================== -->
-                <section id="view-past-tester" class="view-panel">
-                    <div class="panel" style="margin-bottom: 20px;">
+                <section id="view-weekly-backtest" class="view-panel">
+                    <div class="panel wb-panel" style="margin-bottom: 20px;">
                         <div class="panel-header" style="flex-wrap: wrap; gap: 14px;">
                             <div>
-                                <span class="panel-title" style="display: flex; align-items: center; gap: 8px;">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #38bdf8;">
-                                        <circle cx="12" cy="12" r="10"></circle>
-                                        <polyline points="12 6 12 12 16 14"></polyline>
-                                    </svg>
-                                    Historical Prediction Reality Check &amp; Backtest Sandbox
-                                </span>
-                                <div class="panel-subtitle">Evaluate past point-in-time predictions and benchmark against what actually happened over the following 5 market sessions.</div>
+                                <span class="panel-title">Weekly Backtest</span>
+                                <div class="panel-subtitle">Each Monday runs the full present-engine scan, the same one as a live analysis, and names 5 stocks. A year takes as long as that many full scans. The row is the week's hits, losses, win rate, and loss rate.</div>
                             </div>
                         </div>
-
-                        <!-- Mode Selector Bar (Present Engine vs Past Archived Runs) -->
-                        <div style="background: rgba(15, 23, 42, 0.7); border-bottom: 1px solid var(--border-subtle); padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;">
-                            <div style="display: flex; align-items: center; gap: 6px; background: rgba(30, 41, 59, 0.6); padding: 3px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                                <button id="tabModePresentEngine" onclick="switchPastTesterMode('present')" class="btn btn-sm" style="height: 28px; font-size: 11.5px; padding: 0 14px; font-weight: 600; border-radius: 4px; background: #38bdf8; color: #020617; border: none; display: flex; align-items: center; gap: 6px; cursor: pointer; transition: all 0.15s ease;">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-                                    </svg>
-                                    ⚡ Present Engine (New Calibrated Model)
-                                </button>
-                                <button id="tabModeRecordedPast" onclick="switchPastTesterMode('recorded')" class="btn btn-sm" style="height: 28px; font-size: 11.5px; padding: 0 14px; font-weight: 500; border-radius: 4px; background: transparent; color: var(--text-muted); border: none; display: flex; align-items: center; gap: 6px; cursor: pointer; transition: all 0.15s ease;">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                                        <line x1="16" y1="2" x2="16" y2="6"></line>
-                                        <line x1="8" y1="2" x2="8" y2="6"></line>
-                                        <line x1="3" y1="10" x2="21" y2="10"></line>
-                                    </svg>
-                                    🏛️ Past Prediction Runs (Sealed Historical Database)
-                                </button>
+                        <div class="wb-toolbar">
+                            <div class="wb-field">
+                                <span class="wb-label">Window</span>
+                                <div class="wb-presets" id="wbPresetRow">
+                                    <button type="button" id="wbPreset6mo" class="btn btn-primary btn-sm" data-window="6mo">Last 6 months</button>
+                                    <button type="button" id="wbPreset1y" class="btn btn-secondary btn-sm" data-window="1y">Last 1 year</button>
+                                    <button type="button" id="wbPresetCustom" class="btn btn-secondary btn-sm" data-window="custom">Custom dates</button>
+                                </div>
                             </div>
-                            <div id="pastTesterModeDescription" style="font-size: 11.5px; font-family: var(--font-mono); color: #38bdf8; display: flex; align-items: center; gap: 6px;">
-                                <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #38bdf8;"></span>
-                                <span id="pastTesterModeDescText">Evaluating historical dates with today's new multi-factor calibrated engine</span>
+                            <div class="wb-field" id="wbCustomDates">
+                                <label class="wb-label" for="weeklyStartDate">From</label>
+                                <input type="date" id="weeklyStartDate" class="form-control wb-date">
+                            </div>
+                            <div class="wb-field">
+                                <label class="wb-label" for="weeklyEndDate">To</label>
+                                <input type="date" id="weeklyEndDate" class="form-control wb-date">
+                            </div>
+                            <button type="button" class="btn btn-primary" id="btnRunWeeklyBacktest">Run weekly backtest</button>
+                            <div id="weeklyBacktestStatus" class="wb-status">Dates load when you open this tab.</div>
+                        </div>
+                        <div id="weeklyPhaseBanner" style="margin: 14px 18px 0; padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--bg-surface); font-size: 13px; color: var(--text-secondary);">
+                            No weekly score yet. A finished run is written for the next phase.
+                        </div>
+                        <div id="weeklyScoreGrid" style="padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 12px; color: var(--text-muted);">Win rate</div>
+                                <div id="wbWinRate" style="font-size: 22px; font-weight: 700; margin-top: 4px;">--</div>
+                                <div id="wbHitShare" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Hits out of the weekly 5</div>
+                            </div>
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 12px; color: var(--text-muted);">Loss rate</div>
+                                <div id="wbLossRate" style="font-size: 22px; font-weight: 700; margin-top: 4px; color: var(--loss);">--</div>
+                                <div id="wbLossShare" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Losses out of the weekly 5</div>
+                            </div>
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 12px; color: var(--text-muted);">Hits</div>
+                                <div id="wbHits" style="font-size: 22px; font-weight: 700; margin-top: 4px; color: var(--gain);">--</div>
+                            </div>
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 12px; color: var(--text-muted);">Losses</div>
+                                <div id="wbLosses" style="font-size: 22px; font-weight: 700; margin-top: 4px; color: var(--loss);">--</div>
+                            </div>
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 12px; color: var(--text-muted);">Average up</div>
+                                <div id="wbAvgUp" style="font-size: 22px; font-weight: 700; margin-top: 4px;">--</div>
+                                <div id="wbTotalUp" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Total up --</div>
+                            </div>
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 12px; color: var(--text-muted);">Average down</div>
+                                <div id="wbAvgDown" style="font-size: 22px; font-weight: 700; margin-top: 4px;">--</div>
+                                <div id="wbTotalDown" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Total down --</div>
+                            </div>
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 12px; color: var(--text-muted);">Edge vs universe</div>
+                                <div id="wbExcess" style="font-size: 22px; font-weight: 700; margin-top: 4px;">--</div>
+                                <div id="wbBaseRate" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Universe base rate --</div>
+                            </div>
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 12px; color: var(--text-muted);">Expectancy</div>
+                                <div id="wbExpectancy" style="font-size: 22px; font-weight: 700; margin-top: 4px;">--</div>
+                                <div id="wbProfitFactor" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Profit factor --</div>
+                            </div>
+                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                                <div style="font-size: 12px; color: var(--text-muted);">Portfolio</div>
+                                <div id="wbPortfolio" style="font-size: 22px; font-weight: 700; margin-top: 4px;">--</div>
+                                <div id="wbDrawdown" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Max drawdown --</div>
                             </div>
                         </div>
-
-                        <!-- Date Selection & Execution Toolbar: Mode 1 - Present Engine -->
-                        <div id="pastTesterPresentControls" style="background: rgba(15, 23, 42, 0.45); border-bottom: 1px solid var(--border-subtle); padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
-                            <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
-                                <div style="display: flex; flex-direction: column; gap: 4px;">
-                                    <label style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">Quick Presets</label>
-                                    <div id="pastTesterPresetBtns" style="display: flex; gap: 6px; flex-wrap: wrap;">
-                                        <!-- Populated dynamically via JS -->
-                                    </div>
-                                </div>
-
-                                <div style="display: flex; flex-direction: column; gap: 4px;">
-                                    <label style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">Or Custom Past Date</label>
-                                    <input type="date" id="pastTesterCustomDate" class="form-control" style="font-size: 12px; height: 32px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0 8px;">
-                                </div>
-
-                                <div style="display: flex; align-items: flex-end; padding-top: 16px;">
-                                    <button class="btn btn-primary" id="btnRunPastTester" onclick="runSelectedHistoricalTest()" style="height: 32px; font-size: 12px; gap: 6px;">
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                                        </svg>
-                                        <span id="btnRunPastTesterText">Run Present Model Test</span>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div id="pastTesterRunStatus" style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
-                                <span class="badge" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">STANDBY</span>
-                                Select a date to benchmark prediction vs reality.
-                            </div>
-                        </div>
-
-                        <!-- Date Selection & Execution Toolbar: Mode 2 - Past Archived Runs -->
-                        <div id="pastTesterRecordedControls" style="display: none; background: rgba(15, 23, 42, 0.45); border-bottom: 1px solid var(--border-subtle); padding: 14px 18px; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
-                            <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
-                                <div style="display: flex; flex-direction: column; gap: 4px;">
-                                    <label style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">Recorded Past Dates</label>
-                                    <div id="pastTesterRecordedPills" style="display: flex; gap: 6px; flex-wrap: wrap;">
-                                        <!-- Populated dynamically via JS -->
-                                    </div>
-                                </div>
-
-                                <div style="display: flex; flex-direction: column; gap: 4px;">
-                                    <label style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">All Sealed Runs in Database</label>
-                                    <select id="pastTesterRecordedDropdown" class="form-control" style="font-size: 12px; height: 32px; min-width: 200px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);" onchange="onPastTesterRecordedSelect(this.value)">
-                                        <option value="">Select past run...</option>
-                                    </select>
-                                </div>
-
-                                <div style="display: flex; align-items: flex-end; padding-top: 16px;">
-                                    <button class="btn btn-secondary" id="btnRunRecordedRun" onclick="runRecordedHistoricalRun()" style="height: 32px; font-size: 12px; gap: 6px;">
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                            <polyline points="7 10 12 15 17 10"></polyline>
-                                            <line x1="12" y1="15" x2="12" y2="3"></line>
-                                        </svg>
-                                        <span id="btnRunRecordedRunText">Load Sealed Past Run</span>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div id="pastTesterRecordedRunStatus" style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
-                                <span class="badge" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.3);">SEALED RUNS</span>
-                                Select a date to inspect what was archived in the database.
-                            </div>
-                        </div>
-
-                        <!-- Aggregate Scorecard Banner -->
-                        <div id="pastTesterScorecardBanner" style="padding: 16px 18px; border-bottom: 1px solid var(--border-subtle); display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
-                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
-                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">5-Day Target Hit Rate</div>
-                                <div id="ptKpiHitRate" style="font-size: 22px; font-weight: 700; color: #38bdf8; margin-top: 4px;">--</div>
-                                <div id="ptKpiHitCount" style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Target reached at peak</div>
-                            </div>
-
-                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
-                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Profitable Close Rate</div>
-                                <div id="ptKpiWinRate" style="font-size: 22px; font-weight: 700; color: var(--color-bullish); margin-top: 4px;">--</div>
-                                <div id="ptKpiWinCount" style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Closed &gt; Entry at Day 5</div>
-                            </div>
-
-                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
-                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Avg Predicted vs Actual Peak</div>
-                                <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 4px;">
-                                    <span id="ptKpiAvgPred" style="font-size: 16px; font-weight: 600; color: var(--text-muted);">--</span>
-                                    <span style="color: var(--text-muted); font-size: 12px;">→</span>
-                                    <span id="ptKpiAvgPeak" style="font-size: 20px; font-weight: 700; color: #38bdf8;">--</span>
-                                </div>
-                                <div id="ptKpiAvgEnd" style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Avg Day-5 Close: --</div>
-                            </div>
-
-                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
-                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Benchmark Return (Nifty 50)</div>
-                                <div id="ptKpiNifty" style="font-size: 22px; font-weight: 700; color: var(--text-primary); margin-top: 4px;">--</div>
-                                <div style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Identical 5-day session interval</div>
-                            </div>
-
-                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
-                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Net Alpha vs Benchmark</div>
-                                <div id="ptKpiAlpha" style="font-size: 22px; font-weight: 700; color: #38bdf8; margin-top: 4px;">--</div>
-                                <div style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">Portfolio excess return</div>
-                            </div>
-
-                            <div class="kpi-card" style="background: var(--bg-surface); padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
-                                <div style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase;">Market Regime &amp; Quality</div>
-                                <div id="ptKpiRegime" style="font-size: 15px; font-weight: 700; color: #f59e0b; margin-top: 6px;">--</div>
-                                <div id="ptKpiAvgProb" style="font-size: 10.5px; color: var(--text-muted); margin-top: 4px;">Avg Win Prob: --</div>
-                            </div>
-                        </div>
-
-                        <!-- Side-by-Side Comparison Table -->
                         <div class="panel-body" style="padding: 0;">
                             <div class="table-responsive">
-                                <table class="terminal-table" style="width: 100%; border-collapse: collapse;">
+                                <table class="terminal-table" style="width: 100%;">
                                     <thead>
-                                        <tr style="border-bottom: 1px solid var(--border-subtle); font-size: 11px; text-transform: uppercase; color: var(--text-muted);">
-                                            <th style="padding: 10px 14px; text-align: left;">Stock &amp; Sector</th>
-                                            <th style="padding: 10px 12px; text-align: right;">Past Ref Price</th>
-                                            <th style="padding: 10px 12px; text-align: right;">Predicted 5D Target</th>
-                                            <th style="padding: 10px 12px; text-align: right;">Expected Gain</th>
-                                            <th style="padding: 10px 12px; text-align: center;">Win Prob / Grade</th>
-                                            <th style="padding: 10px 12px; text-align: right; background: rgba(56, 189, 248, 0.04);">Actual Peak Reached</th>
-                                            <th style="padding: 10px 12px; text-align: right; background: rgba(56, 189, 248, 0.04);">Actual Day-5 Close</th>
-                                            <th style="padding: 10px 12px; text-align: center;">Target Reached?</th>
-                                            <th style="padding: 10px 12px; text-align: right;">Variance Gap</th>
-                                            <th style="padding: 10px 14px; text-align: center;">Day-by-Day Path</th>
+                                        <tr>
+                                            <th>Week</th>
+                                            <th class="num">Predicted</th>
+                                            <th class="num">Hits</th>
+                                            <th class="num">Losses</th>
+                                            <th class="num">Win rate</th>
+                                            <th class="num">Loss rate</th>
+                                            <th class="num">Avg up</th>
+                                            <th class="num">Avg down</th>
+                                            <th class="num">Base rate</th>
+                                            <th class="num">Nifty</th>
+                                            <th class="num">Edge</th>
                                         </tr>
                                     </thead>
-                                    <tbody id="pastTesterTableBody">
+                                    <tbody id="weeklyBacktestTableBody">
                                         <tr>
-                                            <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 48px 16px;">
-                                                <div style="font-size: 14px; margin-bottom: 6px; font-weight: 600; color: var(--text-primary);">Historical Reality Check Ready</div>
-                                                <div style="font-size: 12px; max-width: 480px; margin: 0 auto;">Select one of the preset buttons above (e.g. 1 Week Ago) or choose any past date to evaluate what the prediction engine forecast and how those stocks actually traded over the following 5 days.</div>
+                                            <td colspan="11" style="text-align: center; color: var(--text-muted); padding: 40px 16px;">
+                                                Each row is one week. The engine names 5 stocks that Monday. The row shows how many of those 5 hit and how many lost.
                                             </td>
                                         </tr>
                                     </tbody>
@@ -1213,7 +1099,7 @@
                 </div>
                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
                     <button type="button" class="btn btn-secondary" onclick="closeDeleteStockModal()">Cancel</button>
-                    <button type="button" class="btn btn-primary" id="btnConfirmDeleteStock" onclick="confirmDeleteStock()" style="background: var(--accent-coral); color: #FFFFFF;">Confirm Delete</button>
+                    <button type="button" class="btn btn-primary" id="btnConfirmDeleteStock" onclick="confirmDeleteStock()" style="background: var(--loss); color: #FFFFFF; border-color: var(--loss);">Confirm Delete</button>
                 </div>
             </div>
         </div>
@@ -1243,7 +1129,7 @@
                 </div>
                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
                     <button type="button" class="btn btn-secondary" onclick="closeDeletePerformanceModal()">Cancel</button>
-                    <button type="button" class="btn btn-primary" id="btnConfirmDeletePerformance" onclick="confirmDeletePerformance()" style="background: var(--accent-coral); color: #FFFFFF;">Confirm Delete</button>
+                    <button type="button" class="btn btn-primary" id="btnConfirmDeletePerformance" onclick="confirmDeletePerformance()" style="background: var(--loss); color: #FFFFFF; border-color: var(--loss);">Confirm Delete</button>
                 </div>
             </div>
         </div>
@@ -1393,11 +1279,11 @@
                 <div id="recordCAFormContainer" style="display: none; background: var(--bg-surface); border: 1px solid var(--border-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;">
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: flex-end;">
                         <div>
-                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Symbol</label>
-                            <input id="caSymbol" type="text" class="form-control" placeholder="TCS" style="text-transform: uppercase;">
+                            <label style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Symbol</label>
+                            <input id="caSymbol" type="text" class="form-control" placeholder="TCS" style="">
                         </div>
                         <div>
-                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Action Type</label>
+                            <label style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Action Type</label>
                             <select id="caType" class="form-control">
                                 <option value="SPLIT">Stock Split</option>
                                 <option value="BONUS">Bonus Issue</option>
@@ -1405,15 +1291,15 @@
                             </select>
                         </div>
                         <div>
-                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Ratio</label>
+                            <label style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Ratio</label>
                             <input id="caRatio" type="text" class="form-control" placeholder="2:1">
                         </div>
                         <div>
-                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Adj Factor</label>
+                            <label style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Adj Factor</label>
                             <input id="caFactor" type="number" step="0.1" class="form-control" placeholder="2.0">
                         </div>
                         <div>
-                            <label style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono);">Ex-Date</label>
+                            <label style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Ex-Date</label>
                             <input id="caExDate" type="date" class="form-control">
                         </div>
                         <div>
@@ -1436,7 +1322,7 @@
                             </tr>
                         </thead>
                         <tbody id="corporateActionsTableBody">
-                            <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading corporate actions...</td></tr>
+                            <tr><td colspan="7" class="ps-orb-block"><span class="ps-orb" data-orb="working" data-orb-size="64" aria-hidden="true"></span>Loading corporate actions...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1471,26 +1357,26 @@
                 <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 18px; margin-bottom: 18px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                         <div style="display: flex; align-items: center; gap: 10px;">
-                            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-mint); box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);"></span>
+                            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-mint);"></span>
                             <span style="font-weight: 700; font-size: 13.5px; color: var(--text-primary); font-family: var(--font-display);">Tapetide Financial Intelligence MCP Gateway</span>
                         </div>
-                        <span id="modalTapetideStatusBadge" class="stance-pill bull">OPERATIONAL (55 TOOLS)</span>
+                        <span id="modalTapetideStatusBadge" class="stance-pill bull">Operational (55 tools)</span>
                     </div>
 
                     <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px;">
-                        Live JSON-RPC stream connection to Tapetide institutional servers (<code style="font-family: var(--font-mono); color: var(--accent-indigo);">mcp.tapetide.com</code>). Powers options chain ATM IV rank/percentile, promoter encumbrance audits, and macro FII/DII net flows.
+                        Live JSON-RPC stream connection to Tapetide institutional servers (<code style="font-family: var(--font-mono); color: var(--accent);">mcp.tapetide.com</code>). Powers options chain ATM IV rank/percentile, promoter encumbrance audits, and macro FII/DII net flows.
                     </div>
 
                     <!-- Quota Meter Card -->
                     <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 14px 16px; margin-bottom: 16px;">
                         <div style="display: flex; justify-content: space-between; font-size: 11.5px; margin-bottom: 8px;">
-                            <span style="color: var(--text-muted); font-family: var(--font-mono); letter-spacing: 0.04em;">DAILY FREE QUOTA ALLOCATION:</span>
+                            <span style="color: var(--text-muted); font-family: var(--font-mono);">Daily free quota:</span>
                             <strong id="modalTapetideQuotaText" style="font-family: var(--font-mono); color: var(--accent-mint);">0 / 50 Calls Used (50 Free Remaining)</strong>
                         </div>
                         <div style="height: 6px; background: var(--border-subtle); border-radius: 3px; overflow: hidden; margin-bottom: 8px;">
                             <div id="modalTapetideQuotaBar" style="height: 100%; width: 10%; background: var(--accent-mint); transition: width 0.3s ease;"></div>
                         </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono);">
+                        <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">
                             <span>Safe Quota Limit: 45 Calls/Day (5 Safety Buffer)</span>
                             <span id="modalTapetideCacheText">5 Cached Scrips (24h TTL, 0 API Calls)</span>
                         </div>
@@ -1499,19 +1385,19 @@
                     <!-- Active Sub-Engines -->
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px;">
                         <div style="background: var(--bg-base); padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">OPTIONS &amp; IV DESK</div>
+                            <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">OPTIONS &amp; IV DESK</div>
                             <div style="font-size: 11.5px; font-weight: 600; color: var(--text-primary); margin-top: 3px;">ATM IV Rank &amp; Percentile</div>
-                            <div style="font-size: 10px; color: var(--text-secondary); margin-top: 2px;">Calculated live from NSE options chains.</div>
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">Calculated live from NSE options chains.</div>
                         </div>
                         <div style="background: var(--bg-base); padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">GOVERNANCE DESK</div>
+                            <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Governance desk</div>
                             <div style="font-size: 11.5px; font-weight: 600; color: var(--text-primary); margin-top: 3px;">Promoter Share Pledging</div>
-                            <div style="font-size: 10px; color: var(--text-secondary); margin-top: 2px;">Automated solvency risk veto rule (>15%).</div>
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">Automated solvency risk veto rule (>15%).</div>
                         </div>
                         <div style="background: var(--bg-base); padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                            <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">MACRO FLOW DESK</div>
+                            <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Macro flow desk</div>
                             <div style="font-size: 11.5px; font-weight: 600; color: var(--text-primary); margin-top: 3px;">FII / DII Exchange Cash</div>
-                            <div style="font-size: 10px; color: var(--text-secondary); margin-top: 2px;">Net institutional cash absorption figures.</div>
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">Net institutional cash absorption figures.</div>
                         </div>
                     </div>
 
@@ -1531,32 +1417,28 @@
     <!-- ====================================================================
          SCANNER PROGRESS STAGE OVERLAY
          ==================================================================== -->
-    <div id="globeLoaderOverlay">
-        <div class="globe-loader-stage">
-            <canvas id="globeCanvas"></canvas>
-        </div>
+    <div id="globeLoaderOverlay" role="status" aria-live="polite">
         <div class="globe-hud-content">
-            <div class="globe-hud-badge">
-                <span>QUANTITATIVE PIPELINE // NSE REALTIME</span>
-            </div>
-            <h2 id="globeLoaderTitle" class="globe-hud-title">SCREENING BENCHMARK EQUITIES UNIVERSE</h2>
-            <p id="globeLoaderSubtitle" class="globe-hud-subtitle">Evaluating 14-day ATR volatility envelopes across NSE leaders...</p>
-            
+            <div id="loaderOrb" class="ps-orb ps-orb-hero" data-orb="working" data-orb-size="64" aria-hidden="true"></div>
+            <h2 id="globeLoaderTitle" class="globe-hud-title">Screening stocks</h2>
+            <p id="globeLoaderSubtitle" class="globe-hud-subtitle">Scoring every liquid NSE and BSE listing.</p>
+
             <div class="globe-metrics-ticker">
-                <div class="globe-percent-value" id="globePercentVal">0%</div>
-                <div class="globe-status-pill" id="globeCountPill">0 of 58 Equities Evaluated</div>
+                <div class="globe-percent-value tabular-nums" id="globePercentVal">0%</div>
+                <div class="globe-status-pill" id="globeCountPill">Preparing</div>
             </div>
 
             <div class="globe-progress-track">
                 <div id="globeProgressBar" class="globe-progress-fill"></div>
             </div>
-            <div id="globeStepText" class="globe-step-ticker">INITIALIZING SCREENING ENGINE...</div>
+            <div id="globeStepText" class="globe-step-ticker"></div>
         </div>
     </div>
 
     <!-- Toast Notification Container -->
     <div id="toastContainer"></div>
 
-    <script src="/static/js/app.js?v=4.0.1"></script>
+    <script src="/static/js/app.js?v=5.5.5"></script>
+    <script src="/static/js/vendor/orbs.bundle.js?v=5.2.0"></script>
 </body>
 </html>

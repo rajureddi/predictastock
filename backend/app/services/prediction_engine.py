@@ -2,11 +2,11 @@
 Multi-Factor 5-Day High-Alpha Prediction & Stock Screening Engine
 Combines Technical Momentum, Relative Strength vs Nifty, Institutional Money Flow (CMF & Volume Surge),
 Solvency Gatekeeper (D/E & ROE constraints), Top-Down Sector Rotation, and News Catalysts.
-Applies mathematical sqrt(5) ATR volatility cones, News Veto Rule, and Immutable Database Logging.
+Applies a 5-day band of about 1.73 times the 14-day ATR, News Veto Rule, and Immutable Database Logging.
 
 Phase 1 & Phase 2 Integrity Rules:
 - NO forced always-positive price targets.
-- Scaled via Brownian diffusion sqrt(5) (~2.0x ATR).
+- The 5-day band is about 1.73 times the 14-day ATR around the last close. The trade target stays separate.
 - Removal of tautologies (cmp > low_bound strictly rejected).
 - Institutional liquidity hurdle: Minimum ₹5 Crore daily turnover (avg_volume_20d * cmp >= 50,000,000).
 - Solvency Gatekeeper: Penalize D/E > 2.0 or ROE < 5% (does not penalize high P/E growth stocks).
@@ -15,9 +15,10 @@ Phase 1 & Phase 2 Integrity Rules:
 """
 import uuid
 import json
+import math
 import random
-from datetime import datetime, date
-from typing import List, Dict, Any, Optional
+from datetime import datetime, date, timedelta
+from typing import List, Dict, Any, Optional, Callable
 import logging
 import numpy as np
 
@@ -25,8 +26,13 @@ from app.database import get_db_connection
 from app.config import (
     MAX_RECOMMENDATIONS_PER_DAY, WEIGHT_TECHNICAL,
     WEIGHT_MONEY_FLOW, WEIGHT_NEWS_SENTIMENT, WEIGHT_MACRO_FLOW,
-    MIN_DAILY_TURNOVER_INR, ENABLE_STRICT_EVIDENCE_GATE
+    MIN_DAILY_TURNOVER_INR, ENABLE_STRICT_EVIDENCE_GATE,
+    SCAN_MIN_TURNOVER_CR, EOD_HISTORY_SESSIONS,
+    EXCLUDED_SERIES, ENTRY_SETUP_BONUS, RANKER_VOL_CAP_ATR_PCT,
+    REGIME_SIZE_BULL, REGIME_SIZE_CORRECTION, REGIME_SIZE_UNKNOWN,
+    REPORTS_DIR,
 )
+from app.services.eod_store import sync_eod_store, get_full_market_universe
 from app.data.nifty_constituents import (
     FULL_NSE_UNIVERSE, NIFTY_UNIVERSE, get_symbol_info, get_dynamic_bhavcopy_universe
 )
@@ -37,7 +43,7 @@ from app.services.market_data import (
 )
 from app.services.indicators import (
     compute_all_indicators, compute_mathematical_5d_range,
-    evaluate_strict_long_setup,
+    evaluate_strict_long_setup, classify_entry_setup,
 )
 from app.services.news_sentiment import fetch_stock_news_rss, analyze_sentiment
 import time
@@ -135,11 +141,87 @@ def supersede_previous_runs_for_date(
 
 
 
+# Last completed weekly book, 1 Dec 2025 through 31 Oct 2026. Used when the
+# forecast ledger does not yet have enough settled rows to estimate a hit rate.
+WEEKLY_BOOK_HIT_RATE_PCT = 44.8
+_HIT_RATE_CACHE: Dict[str, Any] = {"ready": False, "overall": WEEKLY_BOOK_HIT_RATE_PCT, "source": "weekly book", "buckets": []}
+
+
+def empirical_hit_rate(composite_score: Optional[float] = None) -> Dict[str, Any]:
+    """Measured hit rate for expectancy. A score bucket is used only when it has 40 settled forecasts."""
+    if not _HIT_RATE_CACHE["ready"]:
+        _load_empirical_hit_rates()
+    chosen = None
+    if composite_score is not None:
+        for bucket in _HIT_RATE_CACHE["buckets"]:
+            if bucket["low"] <= float(composite_score) < bucket["high"]:
+                chosen = bucket
+                break
+    if chosen:
+        return {"hit_rate_pct": chosen["rate"], "source": chosen["source"], "sample_size": chosen["sample_size"]}
+    return {
+        "hit_rate_pct": _HIT_RATE_CACHE["overall"],
+        "source": _HIT_RATE_CACHE["source"],
+        "sample_size": _HIT_RATE_CACHE.get("sample_size", 0),
+    }
+
+
+def _load_empirical_hit_rates() -> None:
+    rows = []
+    try:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT r.composite_score AS composite_score, f.direction_correct AS direction_correct
+                FROM forecast_evaluations f
+                LEFT JOIN recommendations r ON r.id = f.recommendation_id
+                WHERE f.status = 'COMPLETED' AND f.direction_correct IS NOT NULL
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.warning("Forecast ledger unavailable for the hit rate: %s", exc)
+        rows = []
+    settled = [(row["composite_score"], int(row["direction_correct"])) for row in rows]
+    overall = WEEKLY_BOOK_HIT_RATE_PCT
+    source = "weekly book 1 Dec 2025-31 Oct 2026"
+    sample_size = len(settled)
+    if sample_size >= 40:
+        overall = round(sum(flag for _score, flag in settled) / sample_size * 100.0, 1)
+        source = "forecast_evaluations"
+    buckets = []
+    if sample_size >= 40:
+        for low in range(0, 100, 10):
+            members = [flag for score, flag in settled if score is not None and low <= float(score) < low + 10]
+            if len(members) >= 40:
+                buckets.append({
+                    "low": low,
+                    "high": low + 10,
+                    "rate": round(sum(members) / len(members) * 100.0, 1),
+                    "sample_size": len(members),
+                    "source": f"forecast_evaluations composite {low}-{low + 10}",
+                })
+    _HIT_RATE_CACHE.update({
+        "ready": True,
+        "overall": overall,
+        "source": source,
+        "sample_size": sample_size,
+        "buckets": buckets,
+    })
+
+
 def score_single_stock(
     symbol: str,
     as_of_date: Optional[str] = None,
     macro_context: Optional[Dict[str, Any]] = None,
     include_live_news: bool = False,
+    yahoo_ticker: Optional[str] = None,
+    enforce_liquidity_floor: bool = True,
+    display_name: Optional[str] = None,
+    min_turnover_inr: Optional[float] = None,
+    cached_fundamentals_only: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Run 4-pillar high-alpha analysis for an Indian market equity:
@@ -161,19 +243,23 @@ def score_single_stock(
       Macro = 0.10 / 0.80 = 12.50%
     - Record scoring_mode = 'PIT_RENORMALIZED_NO_NEWS' vs 'FULL_4_PILLAR_PIT'.
     """
-    meta = get_symbol_info(symbol)
-    
-    # Fix 2: Adopt V2's 120-Bar Gate & Local Bhavcopy Panel
-    # Query local indexed Bhavcopy panel first (0ms latency, eliminates indicator distortion)
-    df = get_historical_market_bars(symbol, lookback_days=250)
-    if df.empty or len(df) < MIN_HISTORICAL_BARS:
-        df = get_stock_history(symbol, period="1y")
-    
+    meta = dict(get_symbol_info(symbol))
+    if display_name and (not meta.get("name") or meta.get("name") == symbol):
+        meta["name"] = display_name
+
+    # The bhavcopy store is the only series a historical score may use. Yahoo's
+    # "1y" window is anchored to today, so clipping it to an older Monday mixes
+    # two price series and drops the early weeks.
+    df = get_historical_market_bars(symbol, lookback_days=250, as_of_date=as_of_date)
     if as_of_date:
         as_of_str = str(as_of_date)[:10]
-        df = df[df.index <= as_of_str]
-        
-    min_required_bars = 45 if as_of_date else MIN_HISTORICAL_BARS
+        if not df.empty:
+            df = df[df.index <= as_of_str]
+        min_required_bars = 45
+    else:
+        if df.empty or len(df) < MIN_HISTORICAL_BARS:
+            df = get_stock_history(symbol, period="1y", yahoo_ticker=yahoo_ticker)
+        min_required_bars = MIN_HISTORICAL_BARS
     if df.empty or len(df) < min_required_bars:
         logger.warning(f"Insufficient historical data for {symbol} ({len(df)} bars < {min_required_bars}-bar gate), skipping per data integrity rules.")
         return None
@@ -199,9 +285,16 @@ def score_single_stock(
     # Requirement 1: Institutional Rupee Turnover Floor (₹5 Crore minimum daily turnover)
     avg_vol_20d = float(df["Volume"].tail(20).mean()) if "Volume" in df.columns and len(df) >= 20 else 0.0
     avg_turnover_inr = avg_vol_20d * cmp
-    if avg_turnover_inr < MIN_DAILY_TURNOVER_INR:
-        logger.info(f"Skipping illiquid stock {symbol}: 20D turnover ₹{avg_turnover_inr/1e7:.2f} Cr < ₹5.0 Cr hurdle.")
-        return None
+    liquidity_note = ""
+    turnover_floor = MIN_DAILY_TURNOVER_INR if min_turnover_inr is None else min_turnover_inr
+    if avg_turnover_inr < turnover_floor:
+        liquidity_note = (
+            f"20-day turnover is ₹{avg_turnover_inr/1e7:.2f} Cr, below the ₹{turnover_floor/1e7:g} Cr scan hurdle."
+        )
+        if enforce_liquidity_floor:
+            logger.info(f"Skipping illiquid stock {symbol}: {liquidity_note}")
+            return None
+        logger.info(f"Desk analysis kept for {symbol}: {liquidity_note}")
 
     atr = tech["atr_14"]
     vol_5d = tech["volatility_5d_pct"]
@@ -213,9 +306,17 @@ def score_single_stock(
         from app.services.fundamentals import get_point_in_time_fundamentals
         fund_data = get_point_in_time_fundamentals(symbol, as_of_date=as_of_date)
         fundamentals_provenance = fund_data.get("fundamentals_provenance", "QUARTERLY_PIT_45D_LAG")
+    elif cached_fundamentals_only:
+        from app.services.fundamentals import get_cached_fundamentals
+        fund_data = get_cached_fundamentals(symbol, yahoo_ticker=yahoo_ticker)
+        fundamentals_provenance = "CACHED_FILINGS" if fund_data else "DEFERRED_TO_FINALIST_AUDIT"
     else:
         from app.services.fundamentals import fetch_company_fundamentals
-        fund_data = fetch_company_fundamentals(symbol) or {}
+        fund_data = fetch_company_fundamentals(
+            symbol,
+            yahoo_ticker=yahoo_ticker,
+            company_name=display_name,
+        ) or {}
         fundamentals_provenance = "LIVE_OFFICIAL_FILINGS"
 
     de_ratio = fund_data.get("debt_to_equity")
@@ -237,6 +338,8 @@ def score_single_stock(
     fund_summary = "; ".join(signals[:2]) if signals else disclosure
     if solvency_notes:
         fund_summary += f" [Solvency Warning: {', '.join(solvency_notes)}]"
+    if liquidity_note:
+        fund_summary += f" [Liquidity: {liquidity_note} Shown because this stock was opened directly.]"
     
     # Pillar 3: News & Sentiment (Fix 3: Optimized latency)
     # During high-throughput universe screening, defer external HTTP RSS calls to Step 9 (Top 25 finalists).
@@ -310,7 +413,9 @@ def score_single_stock(
         deliv_per=tech.get("deliv_per", 45.0),
         deliv_surge=tech.get("deliv_surge", 1.0),
         is_vcp_squeeze=tech.get("is_vcp_squeeze", False),
-        sma_50=tech.get("sma_50", 0.0)
+        sma_50=tech.get("sma_50", 0.0),
+        delivery_zscore=float(tech.get("delivery_zscore") or 0.0),
+        empirical_hit_rate=empirical_hit_rate(composite_score)["hit_rate_pct"],
     )
     direction = price_range.get("direction", "NEUTRAL")
     action_label = price_range.get("action_label", "HOLD / MONITOR")
@@ -345,6 +450,20 @@ def score_single_stock(
     )
     
     status_text = action_label
+    if macro.get("is_valid") and macro.get("is_bullish"):
+        regime_size = REGIME_SIZE_BULL
+    elif macro.get("is_valid"):
+        regime_size = REGIME_SIZE_CORRECTION
+    else:
+        regime_size = REGIME_SIZE_UNKNOWN
+    entry_setup = classify_entry_setup(tech)
+    last = df.iloc[-1]
+    circuit_locked = bool(
+        float(last["Open"]) == float(last["High"]) == float(last["Low"]) == float(last["Close"])
+    )
+    price_anomaly = bool(
+        "unexplained_jump" in df.columns and bool(df["unexplained_jump"].tail(3).fillna(False).any())
+    )
 
     return {
         "symbol": symbol,
@@ -363,7 +482,13 @@ def score_single_stock(
         "win_probability_pct": win_prob,
         "reward_to_risk": reward_to_risk,
         "setup_quality": setup_quality,
-        "confidence_text": f"Win Prob: {win_prob:.0f}% | R/R: {reward_to_risk:.1f}x | Grade {setup_quality} Setup",
+        "conviction_score": price_range.get("conviction_score", win_prob),
+        "empirical_hit_rate_pct": price_range.get("empirical_hit_rate_pct"),
+        "confidence_text": (
+            f"Conviction Score: {win_prob:.0f} | "
+            f"Expectancy uses {price_range.get('empirical_hit_rate_pct', WEEKLY_BOOK_HIT_RATE_PCT):.1f}% historical hit rate | "
+            f"R/R: {reward_to_risk:.1f}x | Grade {setup_quality} Setup"
+        ),
         "money_flow_score": mf_score,
         "technical_score": tech_score,
         "risk_level": risk_level,
@@ -383,6 +508,14 @@ def score_single_stock(
         "delivery_source": tech.get("delivery_source", "NSE_BHAVCOPY"),
         "is_bhavcopy_actual": tech.get("is_bhavcopy_actual", True),
         "rs_20d": tech.get("rs_20d", 0.0),
+        "rsi_14": tech.get("rsi_14", 50.0),
+        "atr_pct": round((atr / cmp) * 100.0, 2) if cmp else 0.0,
+        "delivery_zscore": float(tech.get("delivery_zscore") or 0.0),
+        "entry_setup": entry_setup,
+        "setup_bonus": float(ENTRY_SETUP_BONUS.get(entry_setup, 0.0)),
+        "regime_size_multiplier": regime_size,
+        "circuit_locked": circuit_locked,
+        "price_anomaly": price_anomaly,
         "sector_rs": sector_rs,
         "macro_regime": macro,
         "is_trade_eligible": strict_setup["is_eligible"],
@@ -403,6 +536,337 @@ def score_single_stock(
         "quarter_used": fund_data.get("quarter_used"),
         "as_of_date": as_of_date
     }
+
+
+def _is_primary_long(analysis: Dict[str, Any]) -> bool:
+    """Same admission rule the live desk uses before ranking."""
+    is_actionable = (
+        analysis.get("direction") == "BULLISH"
+        and float(analysis.get("expected_appreciation_pct", 0) or 0) > 0.0
+    )
+    if not is_actionable:
+        return False
+    if ENABLE_STRICT_EVIDENCE_GATE:
+        return bool(analysis.get("is_trade_eligible"))
+    return True
+
+
+_CALIBRATION_CACHE: Dict[str, Any] = {"mtime": None, "model": None}
+
+
+def _load_rank_calibration() -> Optional[Dict[str, Any]]:
+    """Out-of-sample logistic fit. Idle until a finished backtest says it beats the stated win probability."""
+    path = REPORTS_DIR / "win_prob_calibration.json"
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    if _CALIBRATION_CACHE["mtime"] != mtime:
+        try:
+            model = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            model = None
+        if not isinstance(model, dict) or not model.get("rank_term_enabled"):
+            model = None
+        _CALIBRATION_CACHE["mtime"] = mtime
+        _CALIBRATION_CACHE["model"] = model
+    return _CALIBRATION_CACHE["model"]
+
+
+def _calibration_rank_term(row: Dict[str, Any]) -> float:
+    model = _load_rank_calibration()
+    if not model:
+        return 0.0
+    fields = model.get("fields") or []
+    center = model.get("center") or []
+    scale = model.get("scale") or []
+    coefs = model.get("coefficients") or {}
+    if not fields or len(center) != len(fields) or len(scale) != len(fields):
+        return 0.0
+    try:
+        z = float(coefs.get("intercept") or 0.0)
+        for i, name in enumerate(fields):
+            raw = row.get(name)
+            if raw is None:
+                return 0.0
+            denom = float(scale[i]) or 1.0
+            z += float(coefs.get(name) or 0.0) * ((float(raw) - float(center[i])) / denom)
+    except (TypeError, ValueError):
+        return 0.0
+    z = max(-20.0, min(20.0, z))
+    probability = 1.0 / (1.0 + math.exp(-z))
+    return (probability - 0.5) * 6.0
+
+
+def _engine_rank_key(row: Dict[str, Any]) -> float:
+    atr_pct = float(row.get("atr_pct") or 0.0)
+    vol_scale = min(1.0, RANKER_VOL_CAP_ATR_PCT / atr_pct) if atr_pct > 0 else 1.0
+    delivery_z = max(-2.0, min(2.0, float(row.get("delivery_zscore") or 0.0)))
+    return (
+        float(row.get("calibrated_expectancy_pct", 0.0)) * 10.0 * vol_scale
+        + float(row.get("win_probability_pct", 50.0)) * 0.40
+        + float(row.get("composite_score", 50.0)) * 0.30
+        + float(row.get("rs_20d", 0.0)) * 0.05
+        + delivery_z * 0.8
+        + float(row.get("setup_bonus") or 0.0)
+        + _calibration_rank_term(row)
+    )
+
+
+def _corporate_ex_dates() -> Dict[str, List[date]]:
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT symbol, ex_date FROM corporate_actions WHERE ex_date IS NOT NULL AND ex_date != ''"
+        ).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    booked: Dict[str, List[date]] = {}
+    for row in rows:
+        try:
+            booked.setdefault(row["symbol"], []).append(datetime.strptime(str(row["ex_date"])[:10], "%Y-%m-%d").date())
+        except ValueError:
+            continue
+    return booked
+
+
+def apply_trade_hygiene(
+    analysis: Dict[str, Any],
+    scrip: Optional[Dict[str, Any]] = None,
+    ex_dates: Optional[Dict[str, List[date]]] = None,
+    surveillance: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    exchange_events: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
+    """Drop names a delivery book should not hold through the next week."""
+    scrip = scrip or {}
+    reasons = []
+    series = str(scrip.get("series") or analysis.get("series") or "").upper()
+    if series:
+        analysis["series"] = series
+    if series in EXCLUDED_SERIES:
+        reasons.append("excluded series")
+    if analysis.get("circuit_locked"):
+        reasons.append("circuit lock")
+    if analysis.get("price_anomaly"):
+        reasons.append("unexplained price jump")
+    anchor_text = analysis.get("as_of_date")
+    anchor = datetime.strptime(str(anchor_text)[:10], "%Y-%m-%d").date() if anchor_text else date.today()
+    window_end = anchor + timedelta(days=12)
+    symbol = analysis.get("symbol")
+    for ex_date in (ex_dates or {}).get(symbol, []):
+        if anchor < ex_date <= window_end:
+            reasons.append("corporate action inside the hold")
+            break
+    for snap in (surveillance or {}).get(symbol, []):
+        observed = snap.get("observed_on")
+        if isinstance(observed, date) and observed <= anchor:
+            reasons.append(f"surveillance {snap.get('list_name')}")
+            break
+    for event in (exchange_events or {}).get(symbol, []):
+        announced = event.get("announced_on")
+        event_date = event.get("event_date")
+        if (
+            isinstance(announced, date)
+            and isinstance(event_date, date)
+            and announced <= anchor < event_date <= window_end
+        ):
+            reasons.append(f"{str(event.get('event_type') or 'event').lower()} inside the hold")
+            break
+    if reasons:
+        analysis["trade_block"] = "; ".join(reasons)
+    return analysis
+
+
+def rank_engine_candidates(all_evaluated: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Rank scored names the same way the live recommendation run does.
+
+    Primary names clear the strict long gate. If that list is shorter than the
+    daily shortlist, the same bullish fallback (at least 1.2% expected move and
+    58% win probability) fills the gap, then both groups share one sort.
+    Names blocked by series, a circuit, a bad print, or an ex-date are not ranked.
+    """
+    pool = [row for row in all_evaluated if not row.get("trade_block")]
+    candidates = [row for row in pool if _is_primary_long(row)]
+    for row in candidates:
+        row["admission_path"] = "strict"
+    if len(candidates) < MAX_RECOMMENDATIONS_PER_DAY and pool:
+        existing = {row["symbol"] for row in candidates}
+        fallbacks = [
+            row for row in pool
+            if row.get("direction") == "BULLISH"
+            and float(row.get("expected_appreciation_pct", 0) or 0) >= 1.2
+            and float(row.get("win_probability_pct", 0) or 0) >= 58.0
+            and row["symbol"] not in existing
+        ]
+        for row in fallbacks:
+            row["admission_path"] = "fallback"
+        fallbacks.sort(key=_engine_rank_key, reverse=True)
+        candidates.extend(fallbacks)
+    candidates.sort(key=_engine_rank_key, reverse=True)
+    return candidates
+
+
+def choose_diverse_picks(
+    candidates: List[Dict[str, Any]],
+    limit: int = MAX_RECOMMENDATIONS_PER_DAY,
+) -> List[Dict[str, Any]]:
+    """Keep the live desk's sector cap, then fill any open slots in rank order."""
+    chosen: List[Dict[str, Any]] = []
+    seen_sectors = set()
+    for row in candidates:
+        sector = row.get("sector")
+        if sector not in seen_sectors:
+            chosen.append(row)
+            seen_sectors.add(sector)
+            if len(chosen) == limit:
+                break
+    if len(chosen) < limit:
+        for row in candidates:
+            if row not in chosen:
+                chosen.append(row)
+                if len(chosen) == limit:
+                    break
+    return chosen if chosen else candidates[:limit]
+
+
+def select_present_engine_picks(
+    as_of_date: Optional[str] = None,
+    on_progress: Optional[Callable[..., None]] = None,
+) -> tuple:
+    """Run the live desk screen and return its 5 names plus the universe size.
+
+    ``as_of_date`` replays that same screen on a past Monday. Prices, liquidity,
+    and news stop on that session. Nothing is written to the recommendation book.
+    """
+    as_of = str(as_of_date)[:10] if as_of_date else None
+    universe_pool = get_full_market_universe(as_of_date=as_of)
+    full_market = bool(universe_pool)
+    if not full_market:
+        logger.warning("NSE + BSE EOD store is empty; falling back to the 250-stock NSE liquid universe.")
+        universe_pool = get_dynamic_bhavcopy_universe(min_turnover_cr=10.0, min_price=50.0, target_count=250)
+    total = len(universe_pool)
+    if total == 0:
+        return [], 0
+    scan_turnover_floor = SCAN_MIN_TURNOVER_CR * 1e7 if full_market else None
+    macro = get_nifty50_regime(as_of_date=as_of)
+    if as_of is None:
+        try:
+            from app.services.market_events import sync_market_events
+            sync_market_events()
+        except Exception as exc:
+            logger.warning(f"Surveillance list refresh skipped: {exc}")
+    from app.services.market_events import load_exchange_events, load_surveillance
+    ex_dates = _corporate_ex_dates()
+    surveillance = load_surveillance()
+    exchange_events = load_exchange_events()
+    scrip_by_symbol = {s["symbol"]: s for s in universe_pool}
+    all_evaluated: List[Dict[str, Any]] = []
+    qualified = 0
+
+    def report(evaluated: int, symbol: str, name: str, stage: str) -> None:
+        if on_progress:
+            on_progress(evaluated, total, symbol, name, qualified, stage)
+        elif as_of is None:
+            update_scan_progress(
+                is_active=True,
+                current_symbol=symbol,
+                current_name=name,
+                evaluated_count=evaluated,
+                qualified_count=qualified,
+                target_count=total,
+                percent=min(95, max(5, round((evaluated / total) * 94))) if total else 5,
+                stage_text=stage,
+            )
+
+    def evaluate_scrip(scrip_item):
+        sym = scrip_item["symbol"]
+        name = scrip_item.get("name", sym)
+        try:
+            res = score_single_stock(
+                sym,
+                as_of_date=as_of,
+                macro_context=macro,
+                yahoo_ticker=scrip_item.get("yahoo_ticker"),
+                display_name=name,
+                min_turnover_inr=scan_turnover_floor,
+                cached_fundamentals_only=as_of is None,
+            )
+            if res:
+                res.setdefault("exchange", scrip_item.get("exchange", "NSE"))
+                apply_trade_hygiene(res, scrip_item, ex_dates, surveillance, exchange_events)
+            return sym, name, res
+        except Exception as exc:
+            logger.error(f"Error analyzing candidate {sym}: {exc}")
+            return sym, name, None
+
+    report(0, "", "", f"Screening {total} equities" + (f" as of {as_of}" if as_of else ""))
+    evaluated = 0
+    with ThreadPoolExecutor(max_workers=8 if full_market else 4) as executor:
+        futures = [executor.submit(evaluate_scrip, scrip) for scrip in universe_pool]
+        for future in as_completed(futures):
+            sym, name, analysis = future.result()
+            evaluated += 1
+            if analysis:
+                all_evaluated.append(analysis)
+                if _is_primary_long(analysis):
+                    qualified += 1
+            stage = (
+                f"Evaluated {sym} ({name}) · {qualified} qualified"
+                if analysis else
+                f"Analyzed {sym} ({name}) · {qualified} qualified"
+            )
+            if as_of is None or evaluated == total or evaluated % 10 == 0:
+                report(evaluated, sym, name, stage)
+
+    ranked = rank_engine_candidates(all_evaluated)
+    report(evaluated, "RANK", "Present engine", f"Ranking {len(ranked)} names the live desk would rank")
+
+    audited = []
+    for cand in ranked[:25]:
+        sym = cand["symbol"]
+        scrip = scrip_by_symbol.get(sym, {})
+        try:
+            rescored = score_single_stock(
+                sym,
+                as_of_date=as_of,
+                macro_context=macro,
+                yahoo_ticker=scrip.get("yahoo_ticker"),
+                display_name=scrip.get("name"),
+                min_turnover_inr=scan_turnover_floor,
+            )
+        except Exception as exc:
+            logger.debug(f"Finalist rescore notice for {sym}: {exc}")
+            rescored = cand
+        if not rescored:
+            continue
+        rescored.setdefault("exchange", scrip.get("exchange", cand.get("exchange", "NSE")))
+        rescored.setdefault("admission_path", cand.get("admission_path"))
+        apply_trade_hygiene(rescored, scrip, ex_dates, surveillance, exchange_events)
+        if rescored.get("trade_block"):
+            continue
+        try:
+            headlines = fetch_stock_news_rss(sym, max_items=4, as_of_date=as_of)
+            if headlines:
+                sent_score, sent_label, _catalysts, _risks = analyze_sentiment(headlines)
+                if sent_score <= -0.40:
+                    logger.info(f"News veto on {sym} as of {as_of or 'today'}: {sent_score:.2f}")
+                    continue
+                news_multiplier = (sent_score + 1.0) * 50.0
+                rescored["sentiment_score"] = sent_score
+                rescored["sentiment_label"] = sent_label
+                rescored["composite_score"] = round(
+                    rescored["composite_score"] + ((news_multiplier - 50.0) * WEIGHT_NEWS_SENTIMENT), 1
+                )
+        except Exception as exc:
+            logger.debug(f"News audit notice for {sym}: {exc}")
+        audited.append(rescored)
+
+    if audited:
+        ranked = audited
+    picks = choose_diverse_picks(ranked, MAX_RECOMMENDATIONS_PER_DAY)
+    return picks, total
 
 
 def generate_daily_recommendations(
@@ -435,164 +899,12 @@ def generate_daily_recommendations(
     
     logger.info(f"Initiating screening run {run_id} for {rec_date_str} across liquid NSE market leaders. Evaluation date: {eval_end_date.isoformat()}")
     
-    universe_pool = get_dynamic_bhavcopy_universe(min_turnover_cr=10.0, min_price=50.0, target_count=250)
-    total_universe_count = len(universe_pool)
+    try:
+        sync_eod_store(trading_days=EOD_HISTORY_SESSIONS)
+    except Exception as e:
+        logger.warning(f"EOD store sync failed; scanning with stored sessions: {e}")
 
-    update_scan_progress(
-        is_active=True,
-        evaluated_count=0,
-        qualified_count=0,
-        target_count=total_universe_count,
-        percent=4,
-        stage_text=f"Initiating screening across top {total_universe_count} liquid NSE growth leaders (Turnover >= Rs.10 Cr)..."
-    )
-
-    candidates = []
-    all_evaluated = []
-    evaluated_so_far = 0
-    live_macro_context = get_nifty50_regime()
-
-    def evaluate_scrip(scrip_item):
-        sym = scrip_item["symbol"]
-        nm = scrip_item.get("name", sym)
-        try:
-            res = score_single_stock(sym, macro_context=live_macro_context)
-            return (sym, nm, res)
-        except Exception as e:
-            logger.error(f"Error analyzing candidate {sym}: {e}")
-            return (sym, nm, None)
-
-    # Concurrently score stocks using thread pool with balanced worker count
-    # (max_workers=4 prevents triggering Yahoo Finance 429 throttles & Google RSS SSL handshake timeouts)
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [executor.submit(evaluate_scrip, scrip) for scrip in universe_pool]
-        for f in as_completed(futures):
-            sym, nm, analysis = f.result()
-            evaluated_so_far += 1
-            if analysis:
-                all_evaluated.append(analysis)
-                # Only admit actionable bullish setups with positive expected target appreciation
-                is_actionable_bullish = (
-                    analysis.get("direction") == "BULLISH"
-                    and float(analysis.get("expected_appreciation_pct", 0) or 0) > 0.0
-                )
-                if ENABLE_STRICT_EVIDENCE_GATE:
-                    if is_actionable_bullish and analysis.get("is_trade_eligible"):
-                        candidates.append(analysis)
-                else:
-                    if is_actionable_bullish:
-                        candidates.append(analysis)
-
-            curr_pct = min(95, max(5, round((evaluated_so_far / total_universe_count) * 94)))
-            status_line = (
-                f"✓ Evaluated {sym} ({nm}) • {len(candidates)} qualified"
-                if analysis else
-                f"Analyzed {sym} ({nm}) • {len(candidates)} qualified"
-            )
-            update_scan_progress(
-                is_active=True,
-                current_symbol=sym,
-                current_name=nm,
-                evaluated_count=evaluated_so_far,
-                qualified_count=len(candidates),
-                target_count=total_universe_count,
-                percent=curr_pct,
-                stage_text=status_line
-            )
-
-    # Fallback/augmentation if strict criteria produced fewer than required recommendations during market pullbacks
-    if len(candidates) < MAX_RECOMMENDATIONS_PER_DAY and all_evaluated:
-        logger.info(f"Strict evidence gate qualified {len(candidates)} candidates for {rec_date_str}. Augmenting with top calibrated high-probability setups.")
-        existing_syms = {c["symbol"] for c in candidates}
-        bullish_fallbacks = [
-            c for c in all_evaluated 
-            if c.get("direction") == "BULLISH" 
-            and float(c.get("expected_appreciation_pct", 0) or 0) >= 1.2
-            and float(c.get("win_probability_pct", 0) or 0) >= 58.0
-            and c["symbol"] not in existing_syms
-        ]
-        bullish_fallbacks.sort(
-            key=lambda x: (
-                float(x.get("win_probability_pct", 50.0)) * 0.45
-                + float(x.get("composite_score", 50.0)) * 0.35
-                + float(x.get("rs_20d", 0.0)) * 0.20
-            ),
-            reverse=True
-        )
-        candidates.extend(bullish_fallbacks)
-
-    update_scan_progress(
-        is_active=True,
-        current_symbol="OPTIMIZER",
-        current_name="Multi-Factor Calibrated Alpha Ranking",
-        evaluated_count=evaluated_so_far,
-        qualified_count=len(candidates),
-        target_count=total_universe_count,
-        percent=96,
-        stage_text=f"Optimization: Ranking all {len(candidates)} candidates by calibrated alpha & win probability..."
-    )
-
-    # Multi-factor ranking combining Calibrated Expectancy, Win Probability, Composite Score, and Relative Strength
-    # (Fix 1: Calibrated Expectancy replaces raw ATR volatility bias)
-    candidates.sort(
-        key=lambda x: (
-            float(x.get("calibrated_expectancy_pct", 0.0)) * 10.0
-            + float(x.get("win_probability_pct", 50.0)) * 0.40
-            + float(x.get("composite_score", 50.0)) * 0.30
-            + float(x.get("rs_20d", 0.0)) * 0.15
-        ),
-        reverse=True
-    )
-
-    # Step 9: Post-Ranking News Veto on Top 25 Finalists (Fix 3: Latency Optimization)
-    # Audits sentiment strictly on top candidates, cutting external HTTP network calls by 90%
-    finalists = candidates[:25]
-    audited_candidates = []
-    for cand in finalists:
-        sym = cand["symbol"]
-        try:
-            live_news = fetch_stock_news_rss(sym, max_items=4)
-            if live_news:
-                sent_score, sent_label, catalysts, risks = analyze_sentiment(live_news)
-                # Hard Veto Circuit Breaker (<= -0.40)
-                if sent_score <= -0.40:
-                    logger.warning(f"POST-RANKING NEWS VETO TRIGGERED on {sym}: Sentiment {sent_score:.2f} ({sent_label}). Disqualified.")
-                    continue
-                cand["sentiment_score"] = sent_score
-                cand["sentiment_label"] = sent_label
-                cand["news_summary"] = (
-                    f"News tone is {sent_label} (Sentiment Score: {sent_score:+0.2f}). "
-                    f"{len(live_news)} recent headlines ingested."
-                )
-                # Recalibrate composite score with verified live news multiplier
-                news_multiplier = (sent_score + 1.0) * 50.0
-                cand["composite_score"] = round(cand["composite_score"] + ((news_multiplier - 50.0) * WEIGHT_NEWS_SENTIMENT), 1)
-        except Exception as e:
-            logger.debug(f"Live news audit notice for {sym}: {e}")
-        audited_candidates.append(cand)
-
-    if audited_candidates:
-        candidates = audited_candidates
-
-    # Sector diversity selection: ensure representation across different sectors
-    chosen = []
-    seen_sectors = set()
-    for c in candidates:
-        sec = c.get("sector")
-        if sec not in seen_sectors:
-            chosen.append(c)
-            seen_sectors.add(sec)
-            if len(chosen) == MAX_RECOMMENDATIONS_PER_DAY:
-                break
-                
-    if len(chosen) < MAX_RECOMMENDATIONS_PER_DAY:
-        for c in candidates:
-            if c not in chosen:
-                chosen.append(c)
-                if len(chosen) == MAX_RECOMMENDATIONS_PER_DAY:
-                    break
-
-    top_picks = chosen if chosen else candidates[:MAX_RECOMMENDATIONS_PER_DAY]
+    top_picks, total_universe_count = select_present_engine_picks(as_of_date=None)
     
     if not top_picks:
         logger.warning(f"No stocks passed screening criteria for {rec_date_str}.")
@@ -689,7 +1001,7 @@ def generate_daily_recommendations(
             pick["resistance_level"], pick.get("cmf_20", 0.0), pick.get("vol_surge", 1.0),
             pick.get("deliv_per", 45.0), pick.get("deliv_surge", 1.0), pick.get("rs_20d", 0.0),
             pick["ai_thesis"],
-            pick.get("confidence_text", f"Win Prob: {pick.get('win_probability_pct', 65.0):.0f}% | R/R: {pick.get('reward_to_risk', 1.5):.1f}x | Grade {pick.get('setup_quality', 'A')} Setup"),
+            pick.get("confidence_text", f"Conviction Score: {pick.get('win_probability_pct', 65.0):.0f} | R/R: {pick.get('reward_to_risk', 1.5):.1f}x | Grade {pick.get('setup_quality', 'A')} Setup"),
             "v4-CalibratedQuantAlpha", datetime.now().isoformat(), run_id, pick["direction"],
             pick.get("composite_score", 65.0),
             pick.get("delivery_source", "NSE_BHAVCOPY"),
@@ -737,7 +1049,7 @@ def generate_daily_recommendations(
         is_active=False,
         current_symbol="",
         current_name="",
-        evaluated_count=evaluated_so_far,
+        evaluated_count=total_universe_count,
         qualified_count=len(top_picks),
         target_count=total_universe_count,
         percent=100,
