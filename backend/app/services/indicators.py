@@ -646,6 +646,7 @@ def compute_mathematical_5d_range(
     sma_50: float = 0.0,
     delivery_zscore: float = 0.0,
     empirical_hit_rate: Optional[float] = None,
+    ml_win_prob_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Statistical Multi-Factor 5-Day Calibrated Prediction Engine:
@@ -692,74 +693,81 @@ def compute_mathematical_5d_range(
     is_overextended = bool(extension_pct > 0.045)
     
     # -------------------------------------------------------------
-    # 1. Conviction score, clipped from 15 to 92. This is not a win probability.
+    # 1. Conviction score & Win Probability
     # -------------------------------------------------------------
-    win_prob = 50.0
-    
-    # Factor A: Relative strength vs Nifty. Halved after the 2025-26 research pass
-    # found 20-day momentum had no rank correlation with the next week.
-    if rs_20d > 4.0:
-        win_prob += 6.0
-    elif rs_20d > 0.0:
-        win_prob += 3.0
-    elif rs_20d < -4.0:
-        win_prob -= 6.0
+    if ml_win_prob_pct is not None and ml_win_prob_pct > 0.0:
+        win_prob = float(np.clip(round(ml_win_prob_pct, 1), 15.0, 85.0))
+        is_ml_mode = True
+        has_bullish_signal = bool(win_prob >= 60.0)
+        has_bearish_signal = bool(win_prob <= 44.0)
     else:
-        win_prob -= 3.0
+        is_ml_mode = False
+        win_prob = 50.0
         
-    # Factor B: Institutional Accumulation (Chaikin Money Flow 20)
-    if cmf_20 > 0.10:
-        win_prob += 10.0
-    elif cmf_20 > 0.02:
-        win_prob += 5.0
-    elif cmf_20 < -0.05:
-        win_prob -= 10.0
-        
-    # Factor C: Price Trend & Structural Alignment (20 & 50 DMA)
-    if cmp >= sma_20 and (sma_50 <= 0 or cmp >= sma_50):
-        win_prob += 8.0
-    elif cmp < sma_20:
-        win_prob -= 12.0
-        
-    # Factor D: RSI Quality Consolidation Band
-    if 50 <= rsi <= 68:
-        win_prob += 7.0
-    elif rsi > 70 or rsi < 40:
-        win_prob -= 8.0
-        
-    # Factor E: Volatility Squeeze (VCP) Breakout
-    if is_vcp_squeeze and vol_surge >= 1.15:
-        win_prob += 8.0
-        
-    # Factor F: Overextension Penalty (Avoid buying exhausted tops)
-    if is_overextended:
-        win_prob -= 12.0
-        
-    # Factor G: Macro Market Regime
-    if is_macro_bullish:
-        win_prob += 5.0
-    else:
-        win_prob -= 8.0
-        
-    # Factor H: Verified Exchange Delivery Spike
-    if deliv_surge >= 1.3 and deliv_per >= 48.0:
-        win_prob += 5.0
+        # Factor A: Relative strength vs Nifty. Halved after the 2025-26 research pass
+        # found 20-day momentum had no rank correlation with the next week.
+        if rs_20d > 4.0:
+            win_prob += 6.0
+        elif rs_20d > 0.0:
+            win_prob += 3.0
+        elif rs_20d < -4.0:
+            win_prob -= 6.0
+        else:
+            win_prob -= 3.0
+            
+        # Factor B: Institutional Accumulation (Chaikin Money Flow 20)
+        if cmf_20 > 0.10:
+            win_prob += 10.0
+        elif cmf_20 > 0.02:
+            win_prob += 5.0
+        elif cmf_20 < -0.05:
+            win_prob -= 10.0
+            
+        # Factor C: Price Trend & Structural Alignment (20 & 50 DMA)
+        if cmp >= sma_20 and (sma_50 <= 0 or cmp >= sma_50):
+            win_prob += 8.0
+        elif cmp < sma_20:
+            win_prob -= 12.0
+            
+        # Factor D: RSI Quality Consolidation Band
+        if 50 <= rsi <= 68:
+            win_prob += 7.0
+        elif rsi > 70 or rsi < 40:
+            win_prob -= 8.0
+            
+        # Factor E: Volatility Squeeze (VCP) Breakout
+        if is_vcp_squeeze and vol_surge >= 1.15:
+            win_prob += 8.0
+            
+        # Factor F: Overextension Penalty (Avoid buying exhausted tops)
+        if is_overextended:
+            win_prob -= 12.0
+            
+        # Factor G: Macro Market Regime
+        if is_macro_bullish:
+            win_prob += 5.0
+        else:
+            win_prob -= 8.0
+            
+        # Factor H: Verified Exchange Delivery Spike
+        if deliv_surge >= 1.3 and deliv_per >= 48.0:
+            win_prob += 5.0
 
-    # Factor J: Delivery percent against this stock's own history, not a fixed 45% bar.
-    if delivery_zscore >= 1.5 and cmf_20 > 0.0:
-        win_prob += 4.0
-    elif delivery_zscore <= -1.5:
-        win_prob -= 4.0
+        # Factor J: Delivery percent against this stock's own history, not a fixed 45% bar.
+        if delivery_zscore >= 1.5 and cmf_20 > 0.0:
+            win_prob += 4.0
+        elif delivery_zscore <= -1.5:
+            win_prob -= 4.0
 
-    # Factor I: Explicit Multi-Indicator Signal Alignment
-    has_bullish_signal = "Bullish" in str(signal) or (isinstance(signal, (int, float)) and signal > 0)
-    has_bearish_signal = "Bearish" in str(signal) or (isinstance(signal, (int, float)) and signal < 0)
-    if has_bullish_signal:
-        win_prob += 10.0
-    elif has_bearish_signal:
-        win_prob -= 12.0
+        # Factor I: Explicit Multi-Indicator Signal Alignment
+        has_bullish_signal = "Bullish" in str(signal) or (isinstance(signal, (int, float)) and signal > 0)
+        has_bearish_signal = "Bearish" in str(signal) or (isinstance(signal, (int, float)) and signal < 0)
+        if has_bullish_signal:
+            win_prob += 10.0
+        elif has_bearish_signal:
+            win_prob -= 12.0
 
-    win_prob = float(np.clip(round(win_prob, 1), 15.0, 92.0))
+        win_prob = float(np.clip(round(win_prob, 1), 15.0, 92.0))
 
     # -------------------------------------------------------------
     # 2. Calibrated Expectancy Target Calculation (Fix 1: Calibrated Expectancy)
@@ -767,10 +775,17 @@ def compute_mathematical_5d_range(
     # Eliminates high-beta volatility distortion (raw ATR/CMP proxy):
     # Rather than setting Target = CMP + 1.2*ATR for every stock, the target is
     # scaled by probability conviction (prob_scalar) and capped by structural resistance.
-    regime_mult = 1.15 if (is_macro_bullish or has_bullish_signal) else 0.82
-    quality_mult = 1.0 + (0.15 if rs_20d > 3.0 else 0.0) + (0.10 if cmf_20 > 0.08 else 0.0)
-    prob_scalar = max(0.65, min(1.35, (win_prob / 52.0) ** 0.85))
-    calibrated_move = safe_atr * regime_mult * quality_mult * prob_scalar
+    if is_ml_mode:
+        # Calibrated Triple-Barrier Physics (Target: +1.25x ATR, Stop: -1.50x ATR with 0.30% roundtrip friction)
+        prob_scalar = max(0.85, min(1.20, (win_prob / 60.0) ** 0.5))
+        calibrated_move = safe_atr * 1.25 * prob_scalar
+        stop_risk = safe_atr * 1.50
+    else:
+        regime_mult = 1.15 if (is_macro_bullish or has_bullish_signal) else 0.82
+        quality_mult = 1.0 + (0.15 if rs_20d > 3.0 else 0.0) + (0.10 if cmf_20 > 0.08 else 0.0)
+        prob_scalar = max(0.65, min(1.35, (win_prob / 52.0) ** 0.85))
+        calibrated_move = safe_atr * regime_mult * quality_mult * prob_scalar
+        stop_risk = safe_atr * (0.85 if not is_macro_bullish else 1.05)
 
     # Resistance Ceiling Anchoring:
     dist_res = (resistance - cmp) if (resistance > cmp) else 0.0
@@ -793,13 +808,19 @@ def compute_mathematical_5d_range(
         expected_pct = 5.2
 
     # Stop Loss & Risk/Reward:
-    stop_risk = safe_atr * (0.85 if not is_macro_bullish else 1.05)
     sup_ref = support if (support > 0 and support < cmp) else (cmp - stop_risk)
-    stop_loss = round(max(cmp - (stop_risk * 1.15), sup_ref if sup_ref > (cmp - stop_risk * 1.25) else (cmp - stop_risk)), 2)
+    if is_ml_mode:
+        # Give swing position 1.50x ATR breathing room against intraday noise
+        stop_loss = round(max(cmp - (safe_atr * 1.65), sup_ref if (cmp - sup_ref) >= (safe_atr * 1.25) else (cmp - stop_risk)), 2)
+    else:
+        stop_loss = round(max(cmp - (stop_risk * 1.15), sup_ref if sup_ref > (cmp - stop_risk * 1.25) else (cmp - stop_risk)), 2)
     reward_to_risk = round((target_price - cmp) / max(cmp - stop_loss, 0.01), 2)
 
     # Expectancy uses the measured hit rate. The conviction score stays out of this product.
-    hit_rate = 44.8 if empirical_hit_rate is None else float(empirical_hit_rate)
+    if is_ml_mode:
+        hit_rate = win_prob
+    else:
+        hit_rate = 44.8 if empirical_hit_rate is None else float(empirical_hit_rate)
     hit_rate = max(0.0, min(100.0, hit_rate))
     p_win_fraction = hit_rate / 100.0
     gain_pct = max(0.0, ((target_price - cmp) / cmp) * 100.0) if cmp > 0 else 0.0
@@ -807,22 +828,30 @@ def compute_mathematical_5d_range(
     calibrated_expectancy_pct = round((p_win_fraction * gain_pct) - ((1.0 - p_win_fraction) * risk_pct), 2)
 
     # Setup Quality Classification:
-    if win_prob >= 72.0 and reward_to_risk >= 1.15:
+    if win_prob >= 65.0 and reward_to_risk >= 0.80:
         setup_quality = "A+"
-    elif win_prob >= 64.0 and reward_to_risk >= 0.90:
+    elif win_prob >= 60.0 and reward_to_risk >= 0.70:
         setup_quality = "A"
-    elif win_prob >= 56.0 and reward_to_risk >= 0.68:
+    elif win_prob >= 54.0 and reward_to_risk >= 0.60:
         setup_quality = "B"
     else:
         setup_quality = "C"
 
     # Directional Classification:
-    is_bullish_confirmed = bool(
-        (win_prob >= 54.0 or has_bullish_signal)
-        and (cmp >= sma_ref or has_bullish_signal)
-        and not is_overextended
-        and expected_pct >= 1.0
-    )
+    if is_ml_mode:
+        is_bullish_confirmed = bool(
+            win_prob >= 60.0
+            and cmp >= sma_ref
+            and not is_overextended
+            and expected_pct >= 1.0
+        )
+    else:
+        is_bullish_confirmed = bool(
+            (win_prob >= 54.0 or has_bullish_signal)
+            and (cmp >= sma_ref or has_bullish_signal)
+            and not is_overextended
+            and expected_pct >= 1.0
+        )
 
     is_bearish_confirmed = bool(
         (win_prob <= 44.0 or has_bearish_signal)

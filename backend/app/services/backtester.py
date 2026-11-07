@@ -9,8 +9,9 @@ Phase 1 Integrity Rules:
 - If endpoint price is missing or unverified, remains strictly PENDING.
 - Transparently discloses sample size and statistical significance limitations.
 """
-from datetime import datetime, date
+from datetime import datetime, date, time as dt_time
 from typing import Dict, Any, List, Optional
+from zoneinfo import ZoneInfo
 import sqlite3
 import logging
 import yfinance as yf
@@ -21,71 +22,164 @@ from app.services.market_data import format_ticker_nse, get_stock_history, get_l
 
 logger = logging.getLogger(__name__)
 
+IST = ZoneInfo("Asia/Kolkata")
+# NSE closes at 15:30 IST and the bhavcopy posts afterwards. A Day-5 close is not
+# final before this time, so a same-day forecast is never settled earlier.
+SETTLEMENT_READY_TIME_IST = dt_time(16, 0)
+
+# Rows a scorecard may count: a real Day-5 close, from a run that was not superseded.
+SETTLED_ROW_SQL = (
+    "fe.status = 'COMPLETED' AND fe.actual_end_price IS NOT NULL "
+    "AND (r.is_superseded = 0 OR r.is_superseded IS NULL)"
+)
+
+
+def is_session_settled(end_date_str: str, now: Optional[datetime] = None) -> bool:
+    """True once the end_date session has closed and its bhavcopy can exist."""
+    now_ist = (now or datetime.now(IST)).astimezone(IST)
+    end_day = datetime.strptime(str(end_date_str)[:10], "%Y-%m-%d").date()
+    if end_day < now_ist.date():
+        return True
+    if end_day == now_ist.date():
+        return now_ist.time() >= SETTLEMENT_READY_TIME_IST
+    return False
+
+
+def _local_session_rows(symbol: str, start_exclusive: str, end_inclusive: str) -> List[Dict[str, Any]]:
+    """Exchange bhavcopy bars from the local EOD store, NSE preferred over BSE."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT trading_date, open, high, low, close, nifty50_close, exchange
+            FROM historical_market_bars
+            WHERE symbol = ? AND trading_date > ? AND trading_date <= ?
+            ORDER BY trading_date, CASE exchange WHEN 'NSE' THEN 0 ELSE 1 END
+            """,
+            (symbol, start_exclusive, end_inclusive),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    by_date: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        by_date.setdefault(row["trading_date"], dict(row))
+    return [by_date[key] for key in sorted(by_date)]
+
 
 def get_historical_session_close(symbol: str, target_date_str: str) -> Optional[float]:
     """
-    Retrieve the exact session closing price for a stock on or immediately preceding target_date.
-    Returns None if no historical session data exists for that cutoff.
+    Closing price of the exact target_date session. None if that session is not on record.
+
+    A close from an earlier session is never returned: settling a Day-5 forecast
+    on a Day-4 print is a silent wrong answer, not a fallback.
     """
     clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
+    target = str(target_date_str)[:10]
+    local = _local_session_rows(clean_sym, _day_before(target), target)
+    for row in local:
+        if row["trading_date"] == target and row["close"] and float(row["close"]) > 0:
+            return round(float(row["close"]), 2)
+
     ticker_str = format_ticker_nse(clean_sym)
     try:
-        ticker = yf.Ticker(ticker_str)
-        # Fetch 1 month window around target date
-        target_dt = datetime.strptime(target_date_str, "%Y-%m-%d").date()
-        start_dt = target_dt - pd.Timedelta(days=7)
-        end_dt = target_dt + pd.Timedelta(days=2)
-        
-        hist = ticker.history(start=start_dt.isoformat(), end=end_dt.isoformat())
+        target_dt = datetime.strptime(target, "%Y-%m-%d").date()
+        hist = yf.Ticker(ticker_str).history(
+            start=(target_dt - pd.Timedelta(days=7)).isoformat(),
+            end=(target_dt + pd.Timedelta(days=2)).isoformat(),
+        )
         if hist.empty:
             return None
-            
-        # Filter for sessions up to and including target_date
-        filtered = hist[hist.index.strftime('%Y-%m-%d') <= target_date_str]
-        if filtered.empty:
+        exact = hist[hist.index.strftime("%Y-%m-%d") == target]
+        if exact.empty:
             return None
-            
-        latest_valid_close = float(filtered['Close'].iloc[-1])
-        return round(latest_valid_close, 2)
+        return round(float(exact["Close"].iloc[-1]), 2)
     except Exception as e:
-        logger.warning(f"Could not retrieve historical close for {symbol} on {target_date_str}: {e}")
+        logger.warning(f"Could not retrieve historical close for {symbol} on {target}: {e}")
         return None
+
+
+def _day_before(target: str) -> str:
+    return (datetime.strptime(target, "%Y-%m-%d").date() - pd.Timedelta(days=1)).isoformat()
 
 
 def get_historical_nifty_close(target_date_str: str) -> Optional[float]:
-    """Retrieve historical Nifty 50 (^NSEI) close on target_date."""
+    """Nifty 50 close on the exact target_date session. None if it is not on record."""
+    target = str(target_date_str)[:10]
+    conn = get_db_connection()
     try:
-        nifty = yf.Ticker("^NSEI")
-        target_dt = datetime.strptime(target_date_str, "%Y-%m-%d").date()
-        start_dt = target_dt - pd.Timedelta(days=7)
-        end_dt = target_dt + pd.Timedelta(days=2)
-        
-        hist = nifty.history(start=start_dt.isoformat(), end=end_dt.isoformat())
+        row = conn.execute(
+            "SELECT MAX(nifty50_close) AS close FROM historical_market_bars WHERE trading_date = ? AND nifty50_close > 0",
+            (target,),
+        ).fetchone()
+        if row and row["close"]:
+            return round(float(row["close"]), 2)
+    except sqlite3.Error:
+        pass
+    finally:
+        conn.close()
+    try:
+        target_dt = datetime.strptime(target, "%Y-%m-%d").date()
+        hist = yf.Ticker("^NSEI").history(
+            start=(target_dt - pd.Timedelta(days=7)).isoformat(),
+            end=(target_dt + pd.Timedelta(days=2)).isoformat(),
+        )
         if hist.empty:
             return None
-            
-        filtered = hist[hist.index.strftime('%Y-%m-%d') <= target_date_str]
-        if filtered.empty:
+        exact = hist[hist.index.strftime("%Y-%m-%d") == target]
+        if exact.empty:
             return None
-            
-        return round(float(filtered['Close'].iloc[-1]), 2)
+        return round(float(exact["Close"].iloc[-1]), 2)
     except Exception as e:
-        logger.warning(f"Could not retrieve historical Nifty close on {target_date_str}: {e}")
+        logger.warning(f"Could not retrieve historical Nifty close on {target}: {e}")
         return None
 
 
-def evaluate_pending_forecasts() -> int:
+def classify_barrier_path(
+    bars: List[Dict[str, Any]],
+    stop_loss: Optional[float],
+    target_price: Optional[float],
+) -> Dict[str, Any]:
+    """Walk the forward sessions. Stop and target on the same bar count as the stop."""
+    if not bars:
+        return {"barrier_outcome": None, "actual_peak_price": None, "actual_low_price": None}
+    highs = [float(b["high"]) for b in bars if b.get("high")]
+    lows = [float(b["low"]) for b in bars if b.get("low")]
+    outcome = "HORIZON_CLOSE"
+    stop = float(stop_loss or 0.0)
+    target = float(target_price or 0.0)
+    for bar in bars:
+        hit_stop = stop > 0 and float(bar["low"]) <= stop
+        hit_target = target > 0 and float(bar["high"]) >= target
+        if hit_stop:
+            outcome = "STOP_HIT"
+            break
+        if hit_target:
+            outcome = "TARGET_HIT"
+            break
+    return {
+        "barrier_outcome": outcome,
+        "actual_peak_price": round(max(highs), 2) if highs else None,
+        "actual_low_price": round(min(lows), 2) if lows else None,
+    }
+
+
+def evaluate_pending_forecasts(now: Optional[datetime] = None) -> int:
     """
-    Check pending 5-day forecast records whose end_date has arrived.
-    Fetches verified historical Day 5 closing prices and Nifty 50 close.
-    Phase 1 Rule: If endpoint price is unavailable, leaves record as PENDING.
+    Settle pending 5-day forecasts whose end_date session has closed.
+
+    The Day-5 close must come from the exact end_date session; a missing print
+    leaves the row PENDING. Same-day rows wait until 16:00 IST.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    today_str = date.today().isoformat()
+    today_str = (now or datetime.now(IST)).astimezone(IST).date().isoformat()
     cursor.execute("""
-    SELECT fe.*, r.symbol as rec_symbol, r.direction as rec_direction, pt.price as user_buy_price
+    SELECT fe.*, r.symbol as rec_symbol, r.direction as rec_direction,
+           r.stop_loss as rec_stop_loss, r.expected_target_price as rec_target_price,
+           pt.price as user_buy_price
     FROM forecast_evaluations fe
     JOIN recommendations r ON fe.recommendation_id = r.id
     LEFT JOIN portfolio_transactions pt ON pt.recommendation_id = r.id AND pt.transaction_type = 'BUY'
@@ -98,12 +192,20 @@ def evaluate_pending_forecasts() -> int:
     for item in pending_records:
         symbol = item["rec_symbol"]
         end_date = item["end_date"]
+        if not is_session_settled(end_date, now):
+            continue
         
         # 1. Fetch exact historical close on end_date
         actual_close = get_historical_session_close(symbol, end_date)
         if actual_close is None or actual_close <= 0:
             logger.info(f"Historical endpoint close unavailable for {symbol} on {end_date}; keeping PENDING.")
             continue
+
+        path = classify_barrier_path(
+            _local_session_rows(symbol, item["start_date"], end_date),
+            item.get("rec_stop_loss"),
+            item.get("rec_target_price") or item.get("predicted_target_price"),
+        )
             
         # 2. Fetch exact historical Nifty 50 close on end_date
         nifty_end = get_historical_nifty_close(end_date)
@@ -148,13 +250,18 @@ def evaluate_pending_forecasts() -> int:
             alpha_vs_nifty_pct = ?,
             user_actual_buy_price = ?,
             user_actual_return_pct = ?,
+            barrier_outcome = ?,
+            actual_peak_price = ?,
+            actual_low_price = ?,
             status = 'COMPLETED',
             evaluated_at = ?
         WHERE id = ?
         """, (
             actual_close, actual_return_pct, forecast_error_pct,
             direction_correct, nifty_end, nifty_return_pct,
-            alpha_pct, user_buy, user_return, datetime.now().isoformat(),
+            alpha_pct, user_buy, user_return,
+            path["barrier_outcome"], path["actual_peak_price"], path["actual_low_price"],
+            datetime.now().isoformat(),
             item["id"]
         ))
         completed_count += 1
@@ -164,21 +271,55 @@ def evaluate_pending_forecasts() -> int:
     return completed_count
 
 
+def repair_corrupted_evaluations() -> int:
+    """
+    Resets any evaluation prematurely marked COMPLETED with a NULL actual_end_price back to PENDING.
+    Returns the count of repaired rows.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    UPDATE forecast_evaluations
+    SET status = 'PENDING',
+        actual_end_price = NULL,
+        actual_appreciation_pct = NULL,
+        forecast_error_pct = NULL,
+        direction_correct = NULL,
+        evaluated_at = NULL,
+        barrier_outcome = NULL
+    WHERE status = 'COMPLETED' AND actual_end_price IS NULL
+    """)
+    repaired = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if repaired > 0:
+        logger.info(f"Repaired {repaired} prematurely completed forecast evaluations; reset to PENDING.")
+    return repaired
+
+
 def get_forecast_scorecard() -> Dict[str, Any]:
     """
     Computes overall accuracy scorecard comparing completed predictions against the Nifty 50 baseline.
     Discloses sample size, pending evaluations, and limitations honestly.
+    Only counts settled records with verified end prices from active (non-superseded) runs.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT COUNT(*) FROM forecast_evaluations WHERE status = 'PENDING'")
+    cursor.execute("""
+    SELECT COUNT(*) 
+    FROM forecast_evaluations fe
+    LEFT JOIN recommendations r ON fe.recommendation_id = r.id
+    WHERE fe.status = 'PENDING' AND (r.is_superseded = 0 OR r.is_superseded IS NULL)
+    """)
     pending_count = cursor.fetchone()[0]
     
-    cursor.execute("""
-    SELECT * FROM forecast_evaluations 
-    WHERE status = 'COMPLETED'
-    ORDER BY evaluated_at DESC
+    cursor.execute(f"""
+    SELECT fe.*, r.composite_score, r.is_superseded
+    FROM forecast_evaluations fe
+    LEFT JOIN recommendations r ON fe.recommendation_id = r.id
+    WHERE {SETTLED_ROW_SQL}
+    ORDER BY fe.evaluated_at DESC
     """)
     completed = [dict(row) for row in cursor.fetchall()]
     conn.close()

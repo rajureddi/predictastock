@@ -495,6 +495,10 @@ def init_db() -> None:
     safe_add_column("forecast_evaluations", "predicted_direction TEXT DEFAULT 'BULLISH'")
     safe_add_column("forecast_evaluations", "exception_reason TEXT")
     safe_add_column("forecast_evaluations", "run_id TEXT")
+    # Path-dependent bracket result over the forward window (target / stop / horizon close).
+    safe_add_column("forecast_evaluations", "barrier_outcome TEXT")
+    safe_add_column("forecast_evaluations", "actual_peak_price REAL")
+    safe_add_column("forecast_evaluations", "actual_low_price REAL")
     safe_add_column("portfolio_transactions", "user_id TEXT DEFAULT 'default_trader'")
     safe_add_column("daily_reports", "delivery_status TEXT DEFAULT 'PENDING'")
     safe_add_column("daily_reports", "recipient_email TEXT")

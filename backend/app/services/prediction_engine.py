@@ -248,6 +248,8 @@ def _load_empirical_hit_rates() -> None:
                 FROM forecast_evaluations f
                 LEFT JOIN recommendations r ON r.id = f.recommendation_id
                 WHERE f.status = 'COMPLETED' AND {flag_sql} IS NOT NULL
+                  AND f.actual_end_price IS NOT NULL
+                  AND (r.is_superseded = 0 OR r.is_superseded IS NULL)
                 """
             ).fetchall()
         finally:
@@ -539,6 +541,14 @@ def score_single_stock(
             tech_score, mf_score, macro_score, news=news_multiplier, solvency_penalty=solvency_penalty,
         )
     
+    # ML Alpha Model Quantitative Inference (v5 Supervised Calibrated Probability)
+    from app.services.ml_alpha_model import extract_ml_features_from_df, predict_calibrated_win_rate
+    ml_feats = extract_ml_features_from_df(df, nifty_context=macro)
+    is_nifty_bull = bool(macro.get("is_valid") and macro.get("is_bullish"))
+    ml_output = predict_calibrated_win_rate(ml_feats, is_nifty_bullish=is_nifty_bull)
+    ml_win_prob = ml_output.get("win_probability_pct", 50.0)
+    ml_is_eligible = ml_output.get("is_trade_eligible", False)
+
     # Statistical Calibrated 5-Day ATR Volatility Cone & Directional Scenario
     price_range = compute_mathematical_5d_range(
         cmp=cmp, 
@@ -560,6 +570,7 @@ def score_single_stock(
         sma_50=tech.get("sma_50", 0.0),
         delivery_zscore=float(tech.get("delivery_zscore") or 0.0),
         empirical_hit_rate=empirical_hit_rate(composite_score)["hit_rate_pct"],
+        ml_win_prob_pct=ml_win_prob,
     )
     direction = price_range.get("direction", "NEUTRAL")
     action_label = price_range.get("action_label", "HOLD / MONITOR")
@@ -665,7 +676,12 @@ def score_single_stock(
         "price_anomaly": price_anomaly,
         "sector_rs": sector_rs,
         "macro_regime": macro,
-        "is_trade_eligible": strict_setup["is_eligible"],
+        "is_trade_eligible": bool(strict_setup["is_eligible"] and ml_is_eligible and price_range.get("direction") == "BULLISH"),
+        "ml_win_probability_pct": ml_win_prob,
+        "ml_raw_probability": ml_output.get("raw_probability", 0.5),
+        "ml_setup_grade": ml_output.get("setup_grade", "C"),
+        "ml_trade_eligible": ml_is_eligible,
+        "ml_feature_contributions": ml_output.get("feature_contributions", []),
         "eligibility_checks": strict_setup["checks"],
         "eligibility_check_count": strict_setup["check_count"],
         "eligibility_total_checks": strict_setup["total_checks"],
@@ -694,7 +710,7 @@ def _is_desk_candidate(analysis: Dict[str, Any]) -> bool:
     return (
         analysis.get("direction") == "BULLISH"
         and float(analysis.get("expected_appreciation_pct", 0) or 0) >= 1.2
-        and float(analysis.get("win_probability_pct", 0) or 0) >= 58.0
+        and float(analysis.get("win_probability_pct", 0) or 0) >= 60.0
     )
 
 
@@ -857,7 +873,7 @@ def rank_engine_candidates(all_evaluated: List[Dict[str, Any]]) -> List[Dict[str
             row for row in pool
             if row.get("direction") == "BULLISH"
             and float(row.get("expected_appreciation_pct", 0) or 0) >= 1.2
-            and float(row.get("win_probability_pct", 0) or 0) >= 58.0
+            and float(row.get("win_probability_pct", 0) or 0) >= 60.0
             and row["symbol"] not in existing
         ]
         for row in fallbacks:
