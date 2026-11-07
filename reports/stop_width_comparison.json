@@ -1,0 +1,114 @@
+{
+  "generated_at": "2026-11-06T01:24:10",
+  "start_date": "2025-12-01",
+  "end_date": "2026-10-31",
+  "target": "2 ATR",
+  "horizon_sessions": 4,
+  "note": "Research books only. The live stop rule is unchanged.",
+  "stops": {
+    "1.05": {
+      "random": {
+        "predicted": 233,
+        "hits": 81,
+        "losses": 152,
+        "win_rate_pct": 34.8,
+        "expectancy_pct": -0.891,
+        "profit_factor": 0.59,
+        "avg_up_pct": 3.62,
+        "avg_down_pct": -3.29
+      },
+      "momentum_20d": {
+        "predicted": 207,
+        "hits": 83,
+        "losses": 124,
+        "win_rate_pct": 40.1,
+        "expectancy_pct": -1.189,
+        "profit_factor": 0.69,
+        "avg_up_pct": 6.45,
+        "avg_down_pct": -6.3
+      },
+      "delivery": {
+        "predicted": 227,
+        "hits": 82,
+        "losses": 145,
+        "win_rate_pct": 36.1,
+        "expectancy_pct": -0.743,
+        "profit_factor": 0.67,
+        "avg_up_pct": 4.18,
+        "avg_down_pct": -3.53
+      },
+      "pullback": {
+        "predicted": 231,
+        "hits": 81,
+        "losses": 150,
+        "win_rate_pct": 35.1,
+        "expectancy_pct": -0.473,
+        "profit_factor": 0.75,
+        "avg_up_pct": 3.94,
+        "avg_down_pct": -2.86
+      },
+      "breakout": {
+        "predicted": 68,
+        "hits": 18,
+        "losses": 50,
+        "win_rate_pct": 26.5,
+        "expectancy_pct": -0.954,
+        "profit_factor": 0.42,
+        "avg_up_pct": 2.64,
+        "avg_down_pct": -2.25
+      }
+    },
+    "1.5": {
+      "random": {
+        "predicted": 233,
+        "hits": 83,
+        "losses": 150,
+        "win_rate_pct": 35.6,
+        "expectancy_pct": -0.995,
+        "profit_factor": 0.56,
+        "avg_up_pct": 3.63,
+        "avg_down_pct": -3.55
+      },
+      "momentum_20d": {
+        "predicted": 207,
+        "hits": 89,
+        "losses": 118,
+        "win_rate_pct": 43.0,
+        "expectancy_pct": -1.372,
+        "profit_factor": 0.67,
+        "avg_up_pct": 6.41,
+        "avg_down_pct": -7.24
+      },
+      "delivery": {
+        "predicted": 227,
+        "hits": 87,
+        "losses": 140,
+        "win_rate_pct": 38.3,
+        "expectancy_pct": -0.769,
+        "profit_factor": 0.67,
+        "avg_up_pct": 4.0,
+        "avg_down_pct": -3.73
+      },
+      "pullback": {
+        "predicted": 231,
+        "hits": 84,
+        "losses": 147,
+        "win_rate_pct": 36.4,
+        "expectancy_pct": -0.55,
+        "profit_factor": 0.72,
+        "avg_up_pct": 3.87,
+        "avg_down_pct": -3.07
+      },
+      "breakout": {
+        "predicted": 68,
+        "hits": 20,
+        "losses": 48,
+        "win_rate_pct": 29.4,
+        "expectancy_pct": -0.914,
+        "profit_factor": 0.45,
+        "avg_up_pct": 2.52,
+        "avg_down_pct": -2.35
+      }
+    }
+  }
+}

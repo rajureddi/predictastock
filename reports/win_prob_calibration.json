@@ -1,0 +1,45 @@
+{
+  "status": "ok",
+  "train_trades": 73,
+  "test_trades": 52,
+  "test_weeks_from": "2026-08-17",
+  "fields": [
+    "rs_20d",
+    "cmf_20",
+    "rsi_14",
+    "vol_surge",
+    "delivery_zscore",
+    "composite_score"
+  ],
+  "center": [
+    8.33274,
+    0.150425,
+    58.454247,
+    1.193425,
+    0.539041,
+    83.134247
+  ],
+  "scale": [
+    4.623505,
+    0.08403,
+    4.959443,
+    0.997794,
+    1.028481,
+    6.639178
+  ],
+  "coefficients": {
+    "intercept": 0.14,
+    "rs_20d": 0.467,
+    "cmf_20": -0.372,
+    "rsi_14": 0.015,
+    "vol_surge": 0.35,
+    "delivery_zscore": -0.223,
+    "composite_score": -0.07
+  },
+  "test_hit_rate_pct": 36.5,
+  "brier_model": 0.2866,
+  "brier_stated_win_prob": 0.4547,
+  "model_beats_stated_probability": true,
+  "applied_to_live_weights": false,
+  "rank_term_enabled": true
+}

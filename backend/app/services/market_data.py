@@ -20,7 +20,7 @@ import ssl
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 from app.database import get_db_connection
-from app.data.nifty_constituents import NIFTY_UNIVERSE
+from app.data.nifty_constituents import NIFTY_UNIVERSE, SYMBOL_MAP
 
 # Cache of daily prices to avoid hammering endpoints within the same process session
 _DAILY_PRICE_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -37,6 +37,12 @@ def format_ticker_nse(symbol: str) -> str:
     return f"{clean}.NS"
 
 
+def _is_compact_ticker(symbol: str) -> bool:
+    """True for exchange symbols such as RELIANCE or BAJAJ-AUTO, not legal names."""
+    text = (symbol or "").upper().strip()
+    return bool(text) and " " not in text and len(text) <= 25
+
+
 def is_quote_valid(quote: Optional[Dict[str, Any]]) -> bool:
     """Helper to check whether a quote has a verified, positive numerical close price."""
     if not quote or not isinstance(quote, dict):
@@ -49,18 +55,70 @@ def is_quote_valid(quote: Optional[Dict[str, Any]]) -> bool:
     )
 
 
+def _latest_nifty_closes(limit: int = 2) -> List[Tuple[str, float]]:
+    """Official Nifty closes stored with each bhavcopy session, newest first."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT trading_date, MAX(nifty50_close) AS close
+            FROM historical_market_bars
+            WHERE nifty50_close IS NOT NULL AND nifty50_close > 0
+            GROUP BY trading_date
+            ORDER BY trading_date DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    except Exception as exc:
+        logger.warning("Nifty closes unavailable in the bhavcopy store: %s", exc)
+        return []
+    finally:
+        conn.close()
+    return [(str(row["trading_date"])[:10], float(row["close"])) for row in rows]
+
+
+def _india_vix_from_feed() -> Tuple[Optional[float], Optional[float]]:
+    try:
+        v_hist = yf.Ticker("^INDIAVIX").history(period="5d").dropna(subset=["Close"])
+    except Exception as exc:
+        logger.warning("India VIX feed unavailable: %s", exc)
+        return None, None
+    if v_hist.empty:
+        return None, None
+    v_close = round(float(v_hist["Close"].iloc[-1]), 2)
+    v_prev = round(float(v_hist["Close"].iloc[-2]), 2) if len(v_hist) > 1 else v_close
+    v_change = round(((v_close - v_prev) / v_prev) * 100, 2) if v_prev > 0 else 0.0
+    return v_close, v_change
+
+
 def get_nifty50_live_status() -> Dict[str, Any]:
     """
     Retrieve Nifty 50 and India VIX benchmark levels.
-    Phase 1 Rule: NEVER return synthetic numbers. If feed fails, return explicit unavailable state.
+    The Nifty level is the last close stored from the NSE bhavcopy.
+    A live feed is used only when that store has no close.
     """
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
+    v_close, v_change_pct = _india_vix_from_feed()
+    stored = _latest_nifty_closes(2)
+    if stored:
+        n_close = round(stored[0][1], 2)
+        n_prev = round(stored[1][1], 2) if len(stored) > 1 else n_close
+        n_change_pct = round(((n_close - n_prev) / n_prev) * 100, 2) if n_prev > 0 else 0.0
+        return {
+            "nifty50_price": n_close,
+            "nifty50_change_pct": n_change_pct,
+            "nifty50_session": stored[0][0],
+            "india_vix": v_close,
+            "vix_change_pct": v_change_pct,
+            "source": f"NSE bhavcopy {stored[0][0]}",
+            "timestamp": now_str,
+            "is_valid": True,
+            "error": None,
+        }
     try:
         nifty = yf.Ticker("^NSEI")
-        vix = yf.Ticker("^INDIAVIX")
-        
-        n_hist = nifty.history(period="5d")
-        v_hist = vix.history(period="5d")
+        n_hist = nifty.history(period="5d").dropna(subset=["Close"])
         
         if n_hist.empty:
             logger.warning("Nifty 50 history returned empty from primary market feed.")
@@ -78,13 +136,6 @@ def get_nifty50_live_status() -> Dict[str, Any]:
         n_close = round(float(n_hist['Close'].iloc[-1]), 2)
         n_prev = round(float(n_hist['Close'].iloc[-2]), 2) if len(n_hist) > 1 else n_close
         n_change_pct = round(((n_close - n_prev) / n_prev) * 100, 2) if n_prev > 0 else 0.0
-
-        if not v_hist.empty:
-            v_close = round(float(v_hist['Close'].iloc[-1]), 2)
-            v_prev = round(float(v_hist['Close'].iloc[-2]), 2) if len(v_hist) > 1 else v_close
-            v_change_pct = round(((v_close - v_prev) / v_prev) * 100, 2) if v_prev > 0 else 0.0
-        else:
-            v_close, v_change_pct = None, None
 
         return {
             "nifty50_price": n_close,
@@ -121,6 +172,19 @@ def get_nifty50_regime(as_of_date: Optional[str] = None) -> Dict[str, Any]:
     if cache_key in _NIFTY_REGIME_CACHE:
         return dict(_NIFTY_REGIME_CACHE[cache_key])
 
+    if as_of_date:
+        stored = _nifty_regime_from_store(cache_key)
+        if stored is not None:
+            _NIFTY_REGIME_CACHE[cache_key] = stored
+            return dict(stored)
+    else:
+        latest = _latest_nifty_closes(1)
+        if latest:
+            stored = _nifty_regime_from_store(latest[0][0])
+            if stored is not None:
+                _NIFTY_REGIME_CACHE[cache_key] = stored
+                return dict(stored)
+
     try:
         ticker = yf.Ticker("^NSEI")
         if as_of_date:
@@ -143,6 +207,7 @@ def get_nifty50_regime(as_of_date: Optional[str] = None) -> Dict[str, Any]:
 
         close = float(history["Close"].iloc[-1])
         sma_20 = float(history["Close"].tail(20).mean())
+        sma_50 = float(history["Close"].tail(50).mean()) if len(history) >= 50 else None
         return_20d = float(
             ((history["Close"].iloc[-1] - history["Close"].iloc[-20]) /
              history["Close"].iloc[-20]) * 100.0
@@ -152,6 +217,7 @@ def get_nifty50_regime(as_of_date: Optional[str] = None) -> Dict[str, Any]:
             "as_of_date": cache_key,
             "close": round(close, 2),
             "sma_20": round(sma_20, 2),
+            "sma_50": None if sma_50 is None else round(sma_50, 2),
             "return_20d_pct": round(return_20d, 2),
             "is_bullish": bool(close >= sma_20 and return_20d >= 0.0),
             "source": "NSE (^NSEI via yfinance)",
@@ -174,20 +240,58 @@ def get_nifty50_regime(as_of_date: Optional[str] = None) -> Dict[str, Any]:
     return dict(result)
 
 
-def get_stock_history(symbol: str, period: str = "6mo") -> pd.DataFrame:
-    """Download daily OHLCV dataframe for an NSE stock. Returns empty DataFrame on failure."""
-    ticker_str = format_ticker_nse(symbol)
+def _nifty_regime_from_store(as_of_date: str) -> Optional[Dict[str, Any]]:
+    """Point-in-time Nifty regime from the close stored with each bhavcopy session."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT trading_date, MAX(nifty50_close) AS close
+            FROM historical_market_bars
+            WHERE trading_date <= ? AND nifty50_close IS NOT NULL AND nifty50_close > 0
+            GROUP BY trading_date
+            ORDER BY trading_date DESC
+            LIMIT 60
+            """,
+            (as_of_date,),
+        ).fetchall()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    if len(rows) < 21:
+        return None
+    closes = [float(row["close"]) for row in reversed(rows)]
+    close = closes[-1]
+    sma_20 = sum(closes[-20:]) / 20.0
+    base = closes[-21]
+    return_20d = ((close - base) / base) * 100.0 if base else 0.0
+    return {
+        "is_valid": True,
+        "as_of_date": as_of_date,
+        "close": round(close, 2),
+        "sma_20": round(sma_20, 2),
+        "sma_50": round(sum(closes[-50:]) / 50.0, 2) if len(closes) >= 50 else None,
+        "return_20d_pct": round(return_20d, 2),
+        "is_bullish": bool(close >= sma_20 and return_20d >= 0.0),
+        "source": "NSE bhavcopy nifty close stored with the session",
+        "error": None,
+    }
+
+
+def _download_yahoo_history(ticker_str: str, period: str) -> pd.DataFrame:
+    """Download one Yahoo ticker. Empty frames are not cached, so a later retry can succeed."""
     cache_key = (ticker_str, period)
     if cache_key in _STOCK_HISTORY_CACHE:
         return _STOCK_HISTORY_CACHE[cache_key].copy()
     try:
-        ticker = yf.Ticker(ticker_str)
-        df = ticker.history(period=period)
-        if df.empty:
+        df = yf.Ticker(ticker_str).history(period=period)
+        if df is None or df.empty:
             logger.warning(f"Empty dataframe returned for {ticker_str}")
             return pd.DataFrame()
-        # Drop incomplete NaN rows from market feed
-        df = df.dropna(subset=['Close', 'High', 'Low'])
+        df = df.dropna(subset=["Close", "High", "Low"])
+        if df.empty:
+            return pd.DataFrame()
         _STOCK_HISTORY_CACHE[cache_key] = df
         return df.copy()
     except Exception as e:
@@ -195,38 +299,129 @@ def get_stock_history(symbol: str, period: str = "6mo") -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def get_latest_quote(symbol: str) -> Dict[str, Any]:
+def _completed_bars(frame: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """Drop sessions whose close never printed. Yahoo often leaves that last bar empty."""
+    if frame is None or frame.empty or "Close" not in frame.columns:
+        return pd.DataFrame()
+    out = frame.dropna(subset=["Close"]).copy()
+    if "High" in out.columns and "Low" in out.columns:
+        out = out.dropna(subset=["High", "Low"])
+    if out.empty:
+        return out
+    if getattr(out.index, "tz", None) is not None:
+        out.index = out.index.tz_localize(None)
+    out.index = pd.to_datetime(out.index).normalize()
+    return out[~out.index.duplicated(keep="last")].sort_index()
+
+
+def _merge_price_history(official: pd.DataFrame, live: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
+    """Keep the exchange print. A live bar is added only when it is a later completed session."""
+    official = _completed_bars(official)
+    live = _completed_bars(live)
+    if official.empty and live.empty:
+        return pd.DataFrame(), "unavailable"
+    if official.empty:
+        return live, "NSE (yfinance feed)"
+    if live.empty or live.index.max() <= official.index.max():
+        return official, "NSE bhavcopy"
+    newer = live[live.index > official.index.max()]
+    merged = pd.concat([official, newer]).sort_index()
+    return merged, "NSE bhavcopy plus later live session"
+
+
+def _local_history_fallback(symbol: str, period: str) -> pd.DataFrame:
+    """Indexed NSE/BSE bars for this symbol. Empty when the store has none."""
+    bars_by_period = {
+        "5d": 10,
+        "1mo": 32,
+        "3mo": 90,
+        "6mo": 140,
+        "1y": 260,
+        "2y": 520,
+        "5y": 1300,
+        "max": 2500,
+    }
+    try:
+        local = get_historical_market_bars(symbol, lookback_days=bars_by_period.get(period, 180))
+    except Exception as exc:
+        logger.warning(f"Local history fallback failed for {symbol}: {exc}")
+        return pd.DataFrame()
+    if local is None or local.empty:
+        return pd.DataFrame()
+    return local
+
+
+def _official_print_is_current(official: pd.DataFrame) -> bool:
+    """True when the stored series already ends on the last session the exchange has closed."""
+    official = _completed_bars(official)
+    if official.empty:
+        return False
+    from app.data.nse_calendar import is_trading_day
+    last = official.index.max().date()
+    cursor = date.today()
+    if is_trading_day(cursor) and datetime.now().time() < datetime.strptime("16:00", "%H:%M").time():
+        cursor -= timedelta(days=1)
+    while cursor > last and not is_trading_day(cursor):
+        cursor -= timedelta(days=1)
+    return last >= cursor
+
+
+def load_price_history(
+    symbol: str,
+    period: str = "6mo",
+    yahoo_ticker: Optional[str] = None,
+) -> Tuple[pd.DataFrame, str]:
+    """Official bhavcopy bars, with a later completed live session appended when the file is behind."""
+    clean = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
+    ticker_str = (yahoo_ticker or format_ticker_nse(clean)).upper().strip()
+    official = _local_history_fallback(clean, period)
+    if _official_print_is_current(official):
+        frame, source = _merge_price_history(official, pd.DataFrame())
+        return frame, source
+    live = _download_yahoo_history(ticker_str, period)
+    # Unknown compact tickers are sometimes BSE-only. Skip this when the caller
+    # already supplied a .BO ticker, so a missing NSE feed is not queried twice.
+    if _completed_bars(live).empty and ticker_str.endswith(".NS") and clean not in SYMBOL_MAP and _is_compact_ticker(clean):
+        live = _download_yahoo_history(f"{clean}.BO", period)
+    return _merge_price_history(official, live)
+
+
+def get_stock_history(symbol: str, period: str = "6mo", yahoo_ticker: Optional[str] = None) -> pd.DataFrame:
+    """Daily OHLCV for an NSE or BSE listing. The exchange print wins over a stale feed."""
+    frame, _source = load_price_history(symbol, period=period, yahoo_ticker=yahoo_ticker)
+    return frame
+
+
+def get_latest_quote(symbol: str, yahoo_ticker: Optional[str] = None) -> Dict[str, Any]:
     """
     Retrieve the latest completed closing session price and volume.
     Phase 1 Rule: ZERO synthetic ₹1,000 fallbacks. If data is unavailable, returns
     explicit invalid status with close_price: None.
     """
-    ticker_str = format_ticker_nse(symbol)
     clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
+    ticker_str = (yahoo_ticker or format_ticker_nse(clean_sym)).upper().strip()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
     
     # Check memory cache for today
     today_str = date.today().isoformat()
-    cache_key = f"{clean_sym}_{today_str}"
+    cache_key = f"{ticker_str}_{today_str}"
     if cache_key in _DAILY_PRICE_CACHE:
         cached = _DAILY_PRICE_CACHE[cache_key]
         if cached.get("is_valid"):
             return cached
 
     try:
-        ticker = yf.Ticker(ticker_str)
-        hist = ticker.history(period="5d")
-        if not hist.empty:
-            hist = hist.dropna(subset=['Close', 'High', 'Low'])
+        hist, price_source = load_price_history(clean_sym, period="5d", yahoo_ticker=ticker_str)
         if not hist.empty:
             latest_row = hist.iloc[-1]
             prev_row = hist.iloc[-2] if len(hist) > 1 else latest_row
             
             close_price = round(float(latest_row['Close']), 2)
             prev_close = round(float(prev_row['Close']), 2)
-            high_price = round(float(latest_row['High']), 2)
-            low_price = round(float(latest_row['Low']), 2)
-            volume = int(latest_row['Volume'])
+            high_price = round(float(latest_row['High']), 2) if pd.notna(latest_row.get('High', None)) else close_price
+            low_price = round(float(latest_row['Low']), 2) if pd.notna(latest_row.get('Low', None)) else close_price
+            raw_volume = latest_row['Volume'] if 'Volume' in hist.columns else 0
+            volume = int(raw_volume) if pd.notna(raw_volume) else 0
             day_change_pct = round(((close_price - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
             
             obs_time = (
@@ -243,7 +438,8 @@ def get_latest_quote(symbol: str) -> Dict[str, Any]:
                 "low": low_price,
                 "volume": volume,
                 "day_change_pct": day_change_pct,
-                "source": "NSE (yfinance feed)",
+                "change_pct": day_change_pct,
+                "source": price_source,
                 "timestamp": obs_time,
                 "retrieved_at": now_str,
                 "is_stale": False,
@@ -267,8 +463,8 @@ def get_latest_quote(symbol: str) -> Dict[str, Any]:
                     observation_timestamp
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    obs_id, clean_sym, today_str, "NSE (yfinance feed)",
-                    close_price, "NSE-HistoricalValidation", close_price,
+                    obs_id, clean_sym, today_str, price_source,
+                    close_price, "NSE bhavcopy", close_price,
                     0.0, "VERIFIED", now_str
                 ))
                 conn.commit()
@@ -801,23 +997,112 @@ def get_market_data_coverage() -> Dict[str, Any]:
     }
 
 
-def get_historical_market_bars(symbol: str, lookback_days: int = 90) -> pd.DataFrame:
-    """Retrieve indexed point-in-time historical market bars with verified delivery metrics."""
+_EOD_SESSION_CACHE: Dict[str, Any] = {"loaded_at": 0.0, "dates": set()}
+SPLIT_ADJUST_THRESHOLD = 0.02
+# A single session cannot print this on an NSE cash stock. Treat it as a corporate action
+# even when the calendar guard cannot see every session between the two bars.
+EXTREME_ACTION_RATIO = 0.25
+
+
+def _ingested_eod_dates() -> set:
+    import time
+    if time.time() - _EOD_SESSION_CACHE["loaded_at"] > 600:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute("SELECT DISTINCT trading_date FROM eod_sessions").fetchall()
+            _EOD_SESSION_CACHE["dates"] = {r["trading_date"] for r in rows}
+        except Exception:
+            _EOD_SESSION_CACHE["dates"] = set()
+        finally:
+            conn.close()
+        _EOD_SESSION_CACHE["loaded_at"] = time.time()
+    return _EOD_SESSION_CACHE["dates"]
+
+
+def back_adjust_corporate_actions(df: pd.DataFrame) -> pd.DataFrame:
+    """Back-adjust raw bhavcopy bars for splits, bonuses and large dividends.
+
+    On an ex-date the exchange publishes PREV_CLOSE already adjusted, so
+    PREV_CLOSE(t) / CLOSE(t-1) is the adjustment ratio. A ratio is ignored when a
+    session between the two bars was never ingested, since then CLOSE(t-1) is not
+    the close PREV_CLOSE refers to.
+    """
+    df = _mark_unexplained_jumps(df)
+    if df.empty or "prev_close" not in df.columns or df["prev_close"].isna().all():
+        return df
+    from app.data.nse_calendar import get_trading_days_between
+    ratio = df["prev_close"] / df["Close"].shift(1)
+    candidates = ratio[(ratio - 1.0).abs() > SPLIT_ADJUST_THRESHOLD].dropna()
+    if candidates.empty:
+        return df
+    ingested = _ingested_eod_dates()
+    factors = pd.Series(1.0, index=df.index)
+    positions = {idx: pos for pos, idx in enumerate(df.index)}
+    for idx, r in candidates.items():
+        prev_day = df.index[positions[idx] - 1].date()
+        between = get_trading_days_between(prev_day + timedelta(days=1), idx.date() - timedelta(days=1))
+        extreme = abs(float(r) - 1.0) >= EXTREME_ACTION_RATIO
+        if extreme or all(d.isoformat() in ingested for d in between):
+            factors[idx] = float(r)
+    cumulative = factors[::-1].cumprod()[::-1].shift(-1, fill_value=1.0)
+    if (cumulative == 1.0).all():
+        return df
+    df = df.copy()
+    for col in ("Open", "High", "Low", "Close"):
+        df[col] = df[col] * cumulative
+    df["Volume"] = (df["Volume"] / cumulative).round()
+    if "deliv_qty" in df.columns:
+        df["deliv_qty"] = df["deliv_qty"] / cumulative
+    return _mark_unexplained_jumps(df)
+
+
+def _mark_unexplained_jumps(df: pd.DataFrame) -> pd.DataFrame:
+    """A close-to-close move past any cash circuit, after adjustment, is not a usable print."""
+    if df.empty or "Close" not in df.columns:
+        return df
+    jump = df["Close"].pct_change().abs()
+    df = df.copy()
+    df["unexplained_jump"] = jump.fillna(0.0) >= EXTREME_ACTION_RATIO
+    return df
+
+
+def get_historical_market_bars(symbol: str, lookback_days: int = 90, as_of_date: Optional[str] = None) -> pd.DataFrame:
+    """Retrieve indexed point-in-time NSE/BSE bars, back-adjusted for corporate actions.
+
+    ``as_of_date`` keeps the window ending on that session. A later split or a
+    later price must not enter a historical engine score.
+    """
     clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-    SELECT * FROM (
-        SELECT
-            trading_date, open, high, low, close, volume,
-            deliv_qty, deliv_per, delivery_source, nifty50_close, nifty50_sma20
-        FROM historical_market_bars
-        WHERE symbol = ?
-        ORDER BY trading_date DESC
-        LIMIT ?
-    )
-    ORDER BY trading_date ASC
-    """, (clean_sym, lookback_days))
+    if as_of_date:
+        cursor.execute("""
+        SELECT * FROM (
+            SELECT
+                trading_date, open, high, low, close, volume,
+                deliv_qty, deliv_per, delivery_source, nifty50_close, nifty50_sma20,
+                prev_close, exchange
+            FROM historical_market_bars
+            WHERE symbol = ? AND trading_date <= ?
+            ORDER BY trading_date DESC
+            LIMIT ?
+        )
+        ORDER BY trading_date ASC
+        """, (clean_sym, str(as_of_date)[:10], lookback_days))
+    else:
+        cursor.execute("""
+        SELECT * FROM (
+            SELECT
+                trading_date, open, high, low, close, volume,
+                deliv_qty, deliv_per, delivery_source, nifty50_close, nifty50_sma20,
+                prev_close, exchange
+            FROM historical_market_bars
+            WHERE symbol = ?
+            ORDER BY trading_date DESC
+            LIMIT ?
+        )
+        ORDER BY trading_date ASC
+        """, (clean_sym, lookback_days))
     rows = cursor.fetchall()
     conn.close()
 
@@ -836,5 +1121,5 @@ def get_historical_market_bars(symbol: str, lookback_days: int = 90) -> pd.DataF
         "volume": "Volume"
     }, inplace=True)
     df["is_bhavcopy_actual"] = (df["delivery_source"] == "NSE_BHAVCOPY")
-    return df
+    return back_adjust_corporate_actions(df)
 

@@ -298,7 +298,7 @@
                                             ATR-14: <strong id="chartAtr" style="color: var(--text-primary);">&#8377;--</strong>
                                         </span>
                                         <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-left: 8px;">
-                                            5D Target: <strong id="chartTarget" style="color: var(--accent-mint);">&#8377;--</strong>
+                                            5D band: <strong id="chartTarget" style="color: var(--accent-mint);">&#8377;--</strong>
                                         </span>
                                     </div>
 
@@ -314,7 +314,7 @@
 
                                         <!-- Forecast Toggle -->
                                         <button class="btn btn-secondary btn-sm" id="btnToggleForecast" onclick="toggleForecastProjection()" style="font-size: 12px;">
-                                            5D Forecast Cone: ON
+                                            5D volatility cone: ON
                                         </button>
                                     </div>
                                 </div>
@@ -325,8 +325,8 @@
                                     <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                                         <span style="color: var(--chart-hist); font-weight: 600;">&#x25CF; Historical Close</span>
                                         <span style="color: var(--chart-sma); font-weight: 600;">-- 20-DMA</span>
-                                        <span style="color: var(--chart-target); font-weight: 600;">- - 5D Target</span>
-                                        <span style="color: var(--accent-mint); font-weight: 600;">&#x25A0; ATR Uncertainty Cone</span>
+                                        <span style="color: var(--chart-target); font-weight: 600;">- - Desk target</span>
+                                        <span style="color: var(--accent-mint); font-weight: 600;">&#x25A0; 5-day ATR band</span>
                                     </div>
                                 </div>
 
@@ -338,7 +338,7 @@
                                 <!-- Technical Indicators & Valuation Grid -->
                                 <div class="tech-fund-grid" id="chartTechFundamentalsGrid">
                                     <div class="indicator-unit">
-                                        <span class="ind-label">5-day expected gain</span>
+                                        <span class="ind-label">Cone half-width</span>
                                         <span class="ind-value up" id="panelGain">--</span>
                                     </div>
                                     <div class="indicator-unit">
@@ -379,12 +379,12 @@
                             <div class="ai-prediction-panel">
                                 <div class="ai-panel-header">
                                     <span class="ai-badge">5-day volatility scenario</span>
-                                    <span style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted);" id="aiDataFreshness">T+5 forward</span>
+                                    <span style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted);" id="aiDataFreshness">Not a scored forecast</span>
                                 </div>
                                 <div class="ai-prediction-metrics">
                                     <div class="prediction-highlight-card">
                                         <div class="pred-target-row">
-                                            <span class="pred-target-label">5D Price Target</span>
+                                            <span class="pred-target-label" id="aiTargetLabel">Last close</span>
                                             <span class="pred-target-val tabular-nums" id="aiTargetPrice">&#8377;--</span>
                                         </div>
                                         <div class="pred-cone-range">
@@ -395,27 +395,27 @@
 
                                     <div class="pred-meta-grid">
                                         <div class="pred-meta-item">
-                                            <div class="pred-meta-label">Model Direction</div>
+                                            <div class="pred-meta-label">Direction</div>
                                             <div class="pred-meta-val" id="aiStanceContainer">
-                                                <span class="stance-pill bull" id="aiStanceBadge">Bullish</span>
+                                                <span class="stance-pill neutral" id="aiStanceBadge">Not scored</span>
                                             </div>
                                         </div>
                                         <div class="pred-meta-item">
                                             <div class="pred-meta-label">Composite Score</div>
-                                            <div class="pred-meta-val tabular-nums" id="aiScoreVal">--/100</div>
+                                            <div class="pred-meta-val tabular-nums" id="aiScoreVal">Not scored</div>
                                         </div>
                                         <div class="pred-meta-item">
                                             <div class="pred-meta-label">Volatility Risk</div>
-                                            <div class="pred-meta-val" id="aiRiskVal">Moderate</div>
+                                            <div class="pred-meta-val" id="aiRiskVal">--</div>
                                         </div>
                                         <div class="pred-meta-item">
-                                            <div class="pred-meta-label">Model Calibration</div>
-                                            <div class="pred-meta-val" style="font-size: 11px;">v2.3-Quant</div>
+                                            <div class="pred-meta-label">Source</div>
+                                            <div class="pred-meta-val" id="aiSourceVal" style="font-size: 11px;">Price history only</div>
                                         </div>
                                     </div>
 
                                     <div class="ai-disclaimer-box">
-                                        <strong>Statistical Disclosure:</strong> The 5-day band is about 1.73 times the 14-day ATR around the last close. The trade target is separate and can sit just under the 20-day high. The conviction score is not a win probability.
+                                        <strong>Statistical Disclosure:</strong> A search draws the 5-day band only, about 1.73 times the 14-day ATR around the last close. It does not score the stock and it does not publish a trade target. A composite score appears only after the full scorer runs.
                                     </div>
                                 </div>
                             </div>
@@ -1438,7 +1438,7 @@
     <!-- Toast Notification Container -->
     <div id="toastContainer"></div>
 
-    <script src="/static/js/app.js?v=5.5.5"></script>
+    <script src="/static/js/app.js?v=5.6.2"></script>
     <script src="/static/js/vendor/orbs.bundle.js?v=5.2.0"></script>
 </body>
 </html>

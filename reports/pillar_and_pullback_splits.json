@@ -1,0 +1,164 @@
+{
+  "pillars": {
+    "rebuilt_rows": 91,
+    "median_abs_error": 2.9,
+    "within_1_point": 31,
+    "within_3_points": 49,
+    "score_80_plus": {
+      "n": 37,
+      "means": {
+        "technical": 89.73,
+        "money_flow": 85.03,
+        "news": 55.2,
+        "macro": 58.65,
+        "solvency_penalty": 0.27,
+        "weighted_technical": 40.38,
+        "weighted_money_flow": 21.26,
+        "weighted_news": 11.04,
+        "weighted_macro": 5.86,
+        "cmf_20": 0.19,
+        "vol_surge": 1.52,
+        "deliv_per": 46.14,
+        "deliv_surge": 1.45,
+        "mfi_14": 59.14,
+        "rsi_14": 58.19,
+        "rs_20d": 4.91,
+        "score": 84.99
+      },
+      "share_vcp": 24.3,
+      "share_overextended": 10.8,
+      "share_bullish_macro": 67.6,
+      "share_cmf_above_0_15": 81.1,
+      "share_vol_surge_at_least_1_5": 29.7,
+      "share_delivery_bonus": 8.1,
+      "share_solvency_penalty": 2.7
+    },
+    "score_70_80": {
+      "n": 54,
+      "means": {
+        "technical": 88.93,
+        "money_flow": 80.48,
+        "news": 52.59,
+        "macro": 40.19,
+        "solvency_penalty": 0.37,
+        "weighted_technical": 40.02,
+        "weighted_money_flow": 20.12,
+        "weighted_news": 10.52,
+        "weighted_macro": 4.02,
+        "cmf_20": 0.13,
+        "vol_surge": 1.61,
+        "deliv_per": 48.87,
+        "deliv_surge": 1.6,
+        "mfi_14": 63.92,
+        "rsi_14": 59.94,
+        "rs_20d": 6.7,
+        "score": 75.83
+      },
+      "share_vcp": 24.1,
+      "share_overextended": 9.3,
+      "share_bullish_macro": 14.8,
+      "share_cmf_above_0_15": 35.2,
+      "share_vol_surge_at_least_1_5": 35.2,
+      "share_delivery_bonus": 27.8,
+      "share_solvency_penalty": 3.7
+    },
+    "mean_gap_80_minus_70": {
+      "technical": 0.8,
+      "money_flow": 4.55,
+      "news": 2.61,
+      "macro": 18.46,
+      "solvency_penalty": -0.1,
+      "weighted_technical": 0.36,
+      "weighted_money_flow": 1.14,
+      "weighted_news": 0.52,
+      "weighted_macro": 1.84,
+      "cmf_20": 0.06,
+      "vol_surge": -0.09,
+      "deliv_per": -2.73,
+      "deliv_surge": -0.15,
+      "mfi_14": -4.78,
+      "rsi_14": -1.75,
+      "rs_20d": -1.79,
+      "score": 9.16
+    },
+    "weighted_gap": {
+      "technical": 0.36,
+      "money_flow": 1.14,
+      "news": 0.52,
+      "macro": 1.85,
+      "solvency_penalty": 0.1
+    }
+  },
+  "pullback": {
+    "green_or_up_0_5": {
+      "trades": 93,
+      "win_rate_pct": 37.6,
+      "expectancy_pct": -0.18,
+      "profit_factor": 0.9,
+      "gross_expectancy_pct": 0.07
+    },
+    "red_or_flat": {
+      "trades": 71,
+      "win_rate_pct": 40.8,
+      "expectancy_pct": 0.03,
+      "profit_factor": 1.02,
+      "gross_expectancy_pct": 0.28
+    },
+    "green_close_above_open": {
+      "trades": 83,
+      "win_rate_pct": 37.3,
+      "expectancy_pct": -0.142,
+      "profit_factor": 0.92,
+      "gross_expectancy_pct": 0.108
+    },
+    "red_close": {
+      "trades": 81,
+      "win_rate_pct": 40.7,
+      "expectancy_pct": -0.035,
+      "profit_factor": 0.98,
+      "gross_expectancy_pct": 0.215
+    },
+    "signal_up_at_least_0_5": {
+      "trades": 65,
+      "win_rate_pct": 36.9,
+      "expectancy_pct": -0.399,
+      "profit_factor": 0.82,
+      "gross_expectancy_pct": -0.149
+    },
+    "signal_below_0_5": {
+      "trades": 99,
+      "win_rate_pct": 40.4,
+      "expectancy_pct": 0.115,
+      "profit_factor": 1.09,
+      "gross_expectancy_pct": 0.365
+    },
+    "gap_at_most_0_5": {
+      "trades": 136,
+      "win_rate_pct": 37.5,
+      "expectancy_pct": -0.181,
+      "profit_factor": 0.88,
+      "gross_expectancy_pct": 0.069
+    },
+    "gap_above_0_5": {
+      "trades": 28,
+      "win_rate_pct": 46.4,
+      "expectancy_pct": 0.355,
+      "profit_factor": 1.17,
+      "gross_expectancy_pct": 0.605
+    },
+    "confirmed_and_no_chase": {
+      "trades": 74,
+      "win_rate_pct": 37.8,
+      "expectancy_pct": -0.125,
+      "profit_factor": 0.92,
+      "gross_expectancy_pct": 0.125
+    },
+    "all": {
+      "trades": 164,
+      "win_rate_pct": 39.0,
+      "expectancy_pct": -0.089,
+      "profit_factor": 0.95,
+      "gross_expectancy_pct": 0.161
+    }
+  }
+}

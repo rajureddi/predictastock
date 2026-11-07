@@ -378,6 +378,29 @@ def init_db() -> None:
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hist_news_sym_date ON historical_news_cache (symbol, as_of_date);")
 
+    # Point-in-time surveillance and forthcoming exchange events.
+    # observed_on / announced_on is the day the file was seen, not a backfilled history.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS surveillance_snapshots (
+        symbol TEXT NOT NULL,
+        list_name TEXT NOT NULL,
+        stage TEXT,
+        observed_on TEXT NOT NULL,
+        company TEXT,
+        PRIMARY KEY (symbol, list_name, observed_on)
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS exchange_events (
+        symbol TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        event_date TEXT NOT NULL,
+        announced_on TEXT NOT NULL,
+        detail TEXT,
+        PRIMARY KEY (symbol, event_type, event_date)
+    );
+    """)
+
     # Dynamic Column Migrations for Append-Only Ledger
     cursor.execute("PRAGMA table_info(recommendations);")
     rec_cols = {row["name"] for row in cursor.fetchall()}
@@ -476,6 +499,35 @@ def init_db() -> None:
     safe_add_column("daily_reports", "delivery_status TEXT DEFAULT 'PENDING'")
     safe_add_column("daily_reports", "recipient_email TEXT")
     safe_add_column("paper_recommendations", "actual_peak_price REAL")
+    safe_add_column("historical_market_bars", "exchange TEXT DEFAULT 'NSE'")
+    safe_add_column("historical_market_bars", "series TEXT")
+    safe_add_column("historical_market_bars", "prev_close REAL")
+    safe_add_column("historical_market_bars", "turnover_lacs REAL")
+
+    # NSE + BSE EOD store: one row per listed company (NSE symbol wins for dual listings)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS exchange_listings (
+        symbol TEXT PRIMARY KEY,
+        exchange TEXT NOT NULL,
+        isin TEXT,
+        name TEXT,
+        series TEXT,
+        bse_code TEXT,
+        last_trading_date TEXT,
+        updated_at TEXT NOT NULL
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS eod_sessions (
+        exchange TEXT NOT NULL,
+        trading_date TEXT NOT NULL,
+        row_count INTEGER NOT NULL,
+        ingested_at TEXT NOT NULL,
+        PRIMARY KEY (exchange, trading_date)
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_listings_isin ON exchange_listings(isin);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hist_bars_sym_date ON historical_market_bars(symbol, trading_date);")
 
     conn.commit()
     conn.close()

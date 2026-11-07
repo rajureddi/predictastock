@@ -33,7 +33,8 @@ import logging
 
 from app.config import (
     REPORTS_DIR, BASE_DIR, ROUNDTRIP_FRICTION_PCT,
-    VALIDATION_MIN_OUT_OF_SAMPLE_TRADES, VALIDATION_TARGET_HIT_RATE_PCT,
+    VALIDATION_MIN_EXPECTANCY_PCT, VALIDATION_MIN_OUT_OF_SAMPLE_TRADES,
+    VALIDATION_MIN_PROFIT_FACTOR,
 )
 from app.data.nifty_constituents import NIFTY_UNIVERSE
 from app.database import get_db_connection
@@ -716,24 +717,24 @@ def run_historical_backtest(
     oos_sample_size = oos_baseline_metrics["sample_size"]
     oos_hit_rate = oos_baseline_metrics["directional_hit_rate_pct"]
     oos_avg_net = oos_baseline_metrics["avg_net_return_pct"]
+    oos_profit_factor = oos_baseline_metrics["profit_factor"]
     oos_nifty_avg = round(float(np.mean([t["nifty_ret"] for t in oos_baseline_trades])), 2) if oos_baseline_trades else 0.0
     oos_alpha = round(oos_avg_net - oos_nifty_avg, 2)
     release_passed = bool(
         oos_sample_size >= VALIDATION_MIN_OUT_OF_SAMPLE_TRADES
-        and oos_hit_rate >= VALIDATION_TARGET_HIT_RATE_PCT
-        and oos_avg_net > 0.0
+        and oos_avg_net >= VALIDATION_MIN_EXPECTANCY_PCT
+        and oos_profit_factor >= VALIDATION_MIN_PROFIT_FACTOR
         and oos_alpha > 0.0
     )
-    evidence_verdict = "80% VALIDATED" if release_passed else "PAPER-TRADE ONLY"
+    evidence_verdict = "EDGE VALIDATED" if release_passed else "PAPER-TRADE ONLY"
     verdict_explanation = (
-        f"The strict evidence gate met the release requirement: {oos_hit_rate:.1f}% hit rate across "
-        f"N={oos_sample_size} untouched trades with {oos_avg_net:+.2f}% average net return and "
-        f"{oos_alpha:+.2f}% alpha versus Nifty."
+        f"The untouched book cleared the release bar: N={oos_sample_size}, expectancy {oos_avg_net:+.2f}%, "
+        f"profit factor {oos_profit_factor:.2f}, alpha {oos_alpha:+.2f}% versus Nifty."
         if release_passed else
-        f"The strict evidence gate remains paper-trade only. It needs at least "
-        f"{VALIDATION_MIN_OUT_OF_SAMPLE_TRADES} untouched trades, {VALIDATION_TARGET_HIT_RATE_PCT:.0f}% hit rate, "
-        f"positive net return, and positive Nifty alpha. Current untouched result: N={oos_sample_size}, "
-        f"hit rate {oos_hit_rate:.1f}%, net return {oos_avg_net:+.2f}%, alpha {oos_alpha:+.2f}%."
+        f"The book stays paper-trade only. It needs at least {VALIDATION_MIN_OUT_OF_SAMPLE_TRADES} untouched trades, "
+        f"expectancy of {VALIDATION_MIN_EXPECTANCY_PCT:.2f}% or better, profit factor {VALIDATION_MIN_PROFIT_FACTOR:.2f}, "
+        f"and positive Nifty alpha. Current untouched result: N={oos_sample_size}, hit rate {oos_hit_rate:.1f}%, "
+        f"net return {oos_avg_net:+.2f}%, profit factor {oos_profit_factor:.2f}, alpha {oos_alpha:+.2f}%."
     )
 
     bull_trades = [t for t in all_baseline_trades if t.get("nifty_ret", 0) >= 0]
@@ -779,8 +780,8 @@ def run_historical_backtest(
             "verdict_explanation": verdict_explanation,
             "release_requirements": {
                 "minimum_untouched_trades": VALIDATION_MIN_OUT_OF_SAMPLE_TRADES,
-                "target_hit_rate_pct": VALIDATION_TARGET_HIT_RATE_PCT,
-                "positive_net_return_required": True,
+                "minimum_expectancy_pct": VALIDATION_MIN_EXPECTANCY_PCT,
+                "minimum_profit_factor": VALIDATION_MIN_PROFIT_FACTOR,
                 "positive_nifty_alpha_required": True,
             },
         },
@@ -878,7 +879,7 @@ def run_historical_backtest(
 ---
 
 ## 3. Strict Evidence Gate & 80% Release Check
-*(Every candidate must pass Nifty regime, relative strength, technical, money-flow, RSI, MACD, volume, verified delivery, composite, and solvency checks.)*
+*(Regime sizes the position. A candidate still has to clear relative strength, technical, money-flow, RSI, MACD, volume, verified delivery, composite, and solvency.)*
 
 | Metric | Strict Dev (50%) | Strict Val (20%) | Strict Test (30%) |
 | :--- | :---: | :---: | :---: |

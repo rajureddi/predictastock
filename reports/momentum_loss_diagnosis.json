@@ -1,0 +1,61 @@
+{
+  "book": "momentum_20d",
+  "stop_multiple": 1.05,
+  "horizon_sessions": 4,
+  "start_date": "2025-12-01",
+  "end_date": "2026-10-31",
+  "filled": 207,
+  "losers": 124,
+  "avg_loser_net_pct": -6.305,
+  "avg_loser_price_return_pct": -5.812,
+  "avg_cost_drag_pct": 0.493,
+  "avg_atr_pct": 6.446,
+  "avg_planned_stop_pct": 6.768,
+  "losers_with_atr_pct_at_least_5": 103,
+  "by_kind": {
+    "entry_day_stop": {
+      "trades": 31,
+      "share_of_losers_pct": 25.0,
+      "share_of_loss_sum_pct": 26.1,
+      "avg_net_pct": -6.589,
+      "avg_price_return_pct": -6.067,
+      "avg_cost_drag_pct": 0.522,
+      "avg_atr_pct": 5.778,
+      "avg_planned_stop_pct": 6.067,
+      "avg_gap_beyond_stop_pct": 0.0
+    },
+    "later_intraday_stop": {
+      "trades": 57,
+      "share_of_losers_pct": 46.0,
+      "share_of_loss_sum_pct": 52.1,
+      "avg_net_pct": -7.139,
+      "avg_price_return_pct": -6.649,
+      "avg_cost_drag_pct": 0.491,
+      "avg_atr_pct": 6.332,
+      "avg_planned_stop_pct": 6.649,
+      "avg_gap_beyond_stop_pct": 0.0
+    },
+    "horizon": {
+      "trades": 27,
+      "share_of_losers_pct": 21.8,
+      "share_of_loss_sum_pct": 10.0,
+      "avg_net_pct": -2.903,
+      "avg_price_return_pct": -2.43,
+      "avg_cost_drag_pct": 0.473,
+      "avg_atr_pct": 7.17,
+      "avg_planned_stop_pct": 7.529,
+      "avg_gap_beyond_stop_pct": 0.0
+    },
+    "overnight_gap": {
+      "trades": 9,
+      "share_of_losers_pct": 7.3,
+      "share_of_loss_sum_pct": 11.8,
+      "avg_net_pct": -10.246,
+      "avg_price_return_pct": -9.787,
+      "avg_cost_drag_pct": 0.459,
+      "avg_atr_pct": 7.292,
+      "avg_planned_stop_pct": 7.656,
+      "avg_gap_beyond_stop_pct": 2.13
+    }
+  }
+}

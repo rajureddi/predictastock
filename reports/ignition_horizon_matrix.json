@@ -1,0 +1,148 @@
+{
+  "ignition": {
+    "threshold_pct": 0.5,
+    "missing_signal_return": 0,
+    "score_80_plus": {
+      "all": {
+        "n": 37,
+        "wins": 4,
+        "win_rate_pct": 10.8
+      },
+      "ignition": {
+        "n": 16,
+        "wins": 2,
+        "win_rate_pct": 12.5
+      },
+      "no_ignition": {
+        "n": 21,
+        "wins": 2,
+        "win_rate_pct": 9.5
+      }
+    },
+    "score_70_80": {
+      "all": {
+        "n": 54,
+        "wins": 24,
+        "win_rate_pct": 44.4
+      },
+      "ignition": {
+        "n": 26,
+        "wins": 15,
+        "win_rate_pct": 57.7
+      },
+      "no_ignition": {
+        "n": 28,
+        "wins": 9,
+        "win_rate_pct": 32.1
+      }
+    },
+    "score_70_plus": {
+      "ignition": {
+        "n": 42,
+        "wins": 17,
+        "win_rate_pct": 40.5
+      },
+      "no_ignition": {
+        "n": 49,
+        "wins": 11,
+        "win_rate_pct": 22.4
+      },
+      "all": {
+        "n": 91,
+        "wins": 28,
+        "win_rate_pct": 30.8
+      }
+    }
+  },
+  "matrix": {
+    "pullback": {
+      "h4_t2": {
+        "trades": 164,
+        "win_rate_pct": 35.4,
+        "expectancy_pct": -0.182,
+        "profit_factor": 0.87,
+        "gross_expectancy_pct": 0.068
+      },
+      "h4_t1.5": {
+        "trades": 164,
+        "win_rate_pct": 37.2,
+        "expectancy_pct": -0.229,
+        "profit_factor": 0.84,
+        "gross_expectancy_pct": 0.021
+      },
+      "h6_t2": {
+        "trades": 164,
+        "win_rate_pct": 39.0,
+        "expectancy_pct": -0.089,
+        "profit_factor": 0.95,
+        "gross_expectancy_pct": 0.161
+      },
+      "h6_t1.5": {
+        "trades": 164,
+        "win_rate_pct": 40.9,
+        "expectancy_pct": -0.13,
+        "profit_factor": 0.92,
+        "gross_expectancy_pct": 0.12
+      },
+      "h8_t2": {
+        "trades": 163,
+        "win_rate_pct": 35.0,
+        "expectancy_pct": -0.221,
+        "profit_factor": 0.88,
+        "gross_expectancy_pct": 0.029
+      },
+      "h8_t1.5": {
+        "trades": 163,
+        "win_rate_pct": 39.3,
+        "expectancy_pct": -0.226,
+        "profit_factor": 0.86,
+        "gross_expectancy_pct": 0.024
+      }
+    },
+    "delivery": {
+      "h4_t2": {
+        "trades": 79,
+        "win_rate_pct": 40.5,
+        "expectancy_pct": -0.478,
+        "profit_factor": 0.82,
+        "gross_expectancy_pct": -0.228
+      },
+      "h4_t1.5": {
+        "trades": 79,
+        "win_rate_pct": 41.8,
+        "expectancy_pct": -0.594,
+        "profit_factor": 0.78,
+        "gross_expectancy_pct": -0.344
+      },
+      "h6_t2": {
+        "trades": 79,
+        "win_rate_pct": 40.5,
+        "expectancy_pct": -0.486,
+        "profit_factor": 0.85,
+        "gross_expectancy_pct": -0.236
+      },
+      "h6_t1.5": {
+        "trades": 79,
+        "win_rate_pct": 43.0,
+        "expectancy_pct": -0.694,
+        "profit_factor": 0.78,
+        "gross_expectancy_pct": -0.444
+      },
+      "h8_t2": {
+        "trades": 79,
+        "win_rate_pct": 36.7,
+        "expectancy_pct": -0.812,
+        "profit_factor": 0.78,
+        "gross_expectancy_pct": -0.562
+      },
+      "h8_t1.5": {
+        "trades": 79,
+        "win_rate_pct": 39.2,
+        "expectancy_pct": -1.06,
+        "profit_factor": 0.7,
+        "gross_expectancy_pct": -0.81
+      }
+    }
+  },
+  "note": "Research only. Stop stays 1.05 ATR. Entry picks are unchanged. Expectancy is net of slippage and 0.25% delivery friction."
+}

@@ -1,5 +1,5 @@
 /**
- * PredictaStock Terminal — Frontend Application Engine
+ * PredictaStock Terminal - Frontend Application Engine
  * Architecture: World-Class Quantitative Finance Terminal
  * Features: Interactive 5D Charting, AI Prediction Panel, Watchlist,
  * FIFO Portfolio Accounting with Stock Deletion, 7 Analysts Debate, and Corporate Actions.
@@ -62,6 +62,26 @@ async function authFetch(url, options = {}) {
     return response;
 }
 
+function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+    }[ch]));
+}
+
+async function apiErrorDetail(res, fallback) {
+    try {
+        const body = await res.json();
+        if (typeof body.detail === "string" && body.detail.trim()) return body.detail;
+    } catch (err) {
+        // Response body was not JSON.
+    }
+    return fallback;
+}
+
 
 // Global State
 let currentTab = "charts";
@@ -73,7 +93,14 @@ let priceChartInstance = null;
 let portfolioChartInstance = null;
 let currentChartData = null;
 let currentChartSymbol = "RELIANCE";
+let currentChartExchange = "NSE";
 let currentTimeframe = "3mo";
+let chartRequestId = 0;
+let searchResults = [];
+let searchActiveIndex = -1;
+let searchSeq = 0;
+let searchTimer = null;
+let searchQuery = "";
 let show5dProjection = true;
 let stockToDelete = null;
 
@@ -89,9 +116,12 @@ document.addEventListener("DOMContentLoaded", () => {
     setupEventListeners();
 });
 
+function cssVar(name) {
+    return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
 async function initApp() {
     initTheme();
-    initThreeGlobeLoader();
     await fetchUniverse();
     await fetchSystemStatus();
     await fetchIntegrationsStatus();
@@ -120,22 +150,14 @@ function setupEventListeners() {
         }
     });
 
+    setupGlobalSearch();
+
     // Default today's date in transaction form
     const dateInput = document.getElementById("txDate");
     if (dateInput) {
         dateInput.value = new Date().toISOString().split("T")[0];
     }
 
-    // Past Data Tester run button explicit listener
-    const btnRunPast = document.getElementById("btnRunPastTester");
-    if (btnRunPast) {
-        btnRunPast.addEventListener("click", (e) => {
-            e.preventDefault();
-            if (typeof window.runSelectedHistoricalTest === "function") {
-                window.runSelectedHistoricalTest();
-            }
-        });
-    }
 }
 
 // --------------------------------------------------------------------------
@@ -171,13 +193,13 @@ function switchTab(tabName) {
 
     // Update Topbar View Title
     const titleMap = {
-        "charts": "MARKET DESK // EQUITIES & 5D FORECAST",
-        "recs": "TODAY'S SETUPS // QUANT MOMENTUM & VOLATILITY CONES",
-        "portfolio": "MY PORTFOLIO // FIFO ACCOUNTING & AUDIT",
-        "risk": "SECTOR ALLOCATION & RISK // EXPOSURE RADAR",
-        "scorecard": "PERFORMANCE & STRATEGY LAB // PIT VERIFICATION",
-        "reports": "DAILY BRIEFING & REPORTS // PRE-MARKET INTELLIGENCE",
-        "past-tester": "PAST DATA TESTER // POINT-IN-TIME REALITY CHECK & BENCHMARK"
+        "charts": "Market Desk",
+        "recs": "Today's Setups",
+        "portfolio": "My Portfolio",
+        "risk": "Sector Allocation & Risk",
+        "scorecard": "Performance & Strategy Lab",
+        "reports": "Daily Briefing & Reports",
+        "weekly-backtest": "Weekly Backtest"
     };
     const titleEl = document.getElementById("currentViewTitle");
     if (titleEl && titleMap[tabName]) {
@@ -187,8 +209,8 @@ function switchTab(tabName) {
     if (tabName === "reports") {
         setupReportPreview();
     }
-    if (tabName === "past-tester") {
-        initPastDataTester();
+    if (tabName === "weekly-backtest") {
+        initWeeklyBacktest();
     }
 
     // Window resize trigger for chart redraw if returning to charts view
@@ -213,14 +235,168 @@ function toggleSidebarCollapse() {
     }
 }
 
-function onGlobalStockSelect(val) {
-    if (!val) return;
-    const cleanSym = val.split("•")[0].split("-")[0].trim().toUpperCase();
-    if (cleanSym) {
-        switchTab("charts");
-        loadStockChart(cleanSym, currentTimeframe);
-        showToast(`Loaded ${cleanSym} in Command Center`, "info");
+function rawSearchQuery() {
+    const input = document.getElementById("globalStockSearch");
+    if (!input) return "";
+    return input.value.split("•")[0].trim();
+}
+
+function hideSearchResults() {
+    const panel = document.getElementById("globalSearchResults");
+    const input = document.getElementById("globalStockSearch");
+    if (panel) panel.hidden = true;
+    if (input) input.setAttribute("aria-expanded", "false");
+    searchActiveIndex = -1;
+}
+
+function renderSearchResults() {
+    const panel = document.getElementById("globalSearchResults");
+    const input = document.getElementById("globalStockSearch");
+    if (!panel) return;
+    if (!searchResults.length) {
+        panel.hidden = false;
+        if (input) input.setAttribute("aria-expanded", "true");
+        panel.innerHTML = `<div class="search-results-empty">No NSE or BSE listing matches that search.</div>`;
+        return;
     }
+    panel.hidden = false;
+    if (input) input.setAttribute("aria-expanded", "true");
+    panel.innerHTML = searchResults.map((row, index) => {
+        const exchange = (row.exchange || "NSE").toUpperCase();
+        const badgeClass = exchange === "BSE" ? "bse" : "nse";
+        return `
+            <button type="button" class="search-result-row${index === searchActiveIndex ? " active" : ""}" role="option" data-search-index="${index}" aria-selected="${index === searchActiveIndex}">
+                <span class="search-result-symbol">${escapeHtml(row.symbol)}</span>
+                <span class="search-result-name">${escapeHtml(row.name || row.symbol)}</span>
+                <span class="search-exchange-badge ${badgeClass}">${escapeHtml(exchange)}</span>
+            </button>
+        `;
+    }).join("");
+    panel.querySelectorAll(".search-result-row").forEach((button) => {
+        button.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+            const index = Number(button.getAttribute("data-search-index"));
+            if (searchResults[index]) openSearchedStock(searchResults[index]);
+        });
+    });
+}
+
+async function runGlobalSearch(query) {
+    const seq = ++searchSeq;
+    searchQuery = query;
+    try {
+        const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
+        if (!res.ok) throw new Error(await apiErrorDetail(res, "Stock search failed"));
+        const rows = await res.json();
+        if (seq !== searchSeq) return rows;
+        searchResults = Array.isArray(rows) ? rows : [];
+        searchActiveIndex = -1;
+        renderSearchResults();
+        return searchResults;
+    } catch (err) {
+        if (seq !== searchSeq) return [];
+        searchResults = [];
+        const panel = document.getElementById("globalSearchResults");
+        if (panel) {
+            panel.hidden = false;
+            panel.innerHTML = `<div class="search-results-empty">${escapeHtml(err.message)}</div>`;
+        }
+        return [];
+    }
+}
+
+function openSearchedStock(result) {
+    if (!result || !result.symbol) return;
+    const input = document.getElementById("globalStockSearch");
+    if (input) input.value = `${result.symbol} • ${result.name || result.symbol}`;
+    hideSearchResults();
+    switchTab("charts");
+    loadStockChart(result.symbol, currentTimeframe, result.exchange || "NSE", true);
+}
+
+async function commitGlobalSearch() {
+    clearTimeout(searchTimer);
+    const query = rawSearchQuery();
+    if (!query) return;
+    if (searchActiveIndex >= 0 && searchResults[searchActiveIndex]) {
+        openSearchedStock(searchResults[searchActiveIndex]);
+        return;
+    }
+    if (searchQuery !== query || !searchResults.length) {
+        await runGlobalSearch(query);
+    }
+    const upper = query.toUpperCase();
+    const exact = searchResults.filter((row) => (row.symbol || "").toUpperCase() === upper);
+    if (!query.includes(" ") && exact.length === 1) {
+        openSearchedStock(exact[0]);
+        return;
+    }
+    if (query.includes(" ") && searchResults.length) {
+        openSearchedStock(searchResults[0]);
+        return;
+    }
+    if (searchResults.length === 1) {
+        openSearchedStock(searchResults[0]);
+        return;
+    }
+    if (searchResults.length > 1) {
+        renderSearchResults();
+        showToast("Select the listing from the search list.", "info");
+        return;
+    }
+    switchTab("charts");
+    loadStockChart(query, currentTimeframe, "", true);
+}
+
+function moveSearchHighlight(step) {
+    if (!searchResults.length) return;
+    const panel = document.getElementById("globalSearchResults");
+    if (panel && panel.hidden) {
+        renderSearchResults();
+    }
+    const next = searchActiveIndex < 0
+        ? (step > 0 ? 0 : searchResults.length - 1)
+        : (searchActiveIndex + step + searchResults.length) % searchResults.length;
+    searchActiveIndex = next;
+    renderSearchResults();
+    const active = document.querySelector(".search-result-row.active");
+    if (active) active.scrollIntoView({ block: "nearest" });
+}
+
+function setupGlobalSearch() {
+    const input = document.getElementById("globalStockSearch");
+    if (!input) return;
+    input.addEventListener("input", () => {
+        clearTimeout(searchTimer);
+        const query = rawSearchQuery();
+        if (query.length < 1) {
+            searchResults = [];
+            searchQuery = "";
+            hideSearchResults();
+            return;
+        }
+        searchTimer = setTimeout(() => runGlobalSearch(query), 220);
+    });
+    input.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown") {
+            event.preventDefault();
+            moveSearchHighlight(1);
+        } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            moveSearchHighlight(-1);
+        } else if (event.key === "Enter") {
+            event.preventDefault();
+            commitGlobalSearch();
+        } else if (event.key === "Escape") {
+            hideSearchResults();
+        }
+    });
+    input.addEventListener("focus", () => {
+        if (searchResults.length && rawSearchQuery()) renderSearchResults();
+    });
+    document.addEventListener("click", (event) => {
+        if (!event.target.closest(".global-search-container")) hideSearchResults();
+    });
 }
 
 // --------------------------------------------------------------------------
@@ -237,16 +413,16 @@ async function fetchSystemStatus() {
         const statusEl = document.getElementById("marketSessionStatus");
         const textEl = document.getElementById("marketStatusText");
 
+        const sessionOpen = data.market_status === "OPEN";
         if (statusEl) {
-            statusEl.textContent = data.is_trading_day ? "OPEN" : "CLOSED";
-            statusEl.style.color = data.is_trading_day ? "var(--emerald-bull)" : "var(--coral-bear)";
+            statusEl.textContent = sessionOpen ? "Open" : "Closed";
         }
         if (pulseEl) {
-            if (data.is_trading_day) pulseEl.classList.remove("closed");
+            if (sessionOpen) pulseEl.classList.remove("closed");
             else pulseEl.classList.add("closed");
         }
         if (textEl) {
-            textEl.textContent = data.is_trading_day ? "NSE REALTIME" : "NSE CLOSED";
+            textEl.textContent = "NSE session";
         }
 
         // Ticker: NIFTY 50
@@ -292,7 +468,7 @@ async function fetchUniverse() {
 function populateUniverseDatalist(stocks) {
     const datalist = document.getElementById("stockUniverseList");
     if (!datalist || !stocks) return;
-    datalist.innerHTML = stocks.slice(0, 1500).map(s => `
+    datalist.innerHTML = stocks.map(s => `
         <option value="${s.symbol}">${s.symbol} • ${s.name} (${s.sector})</option>
     `).join("");
 }
@@ -304,14 +480,14 @@ function setTimeframe(period, btn) {
     currentTimeframe = period;
     document.querySelectorAll(".timeframe-pill-group .tf-btn").forEach(b => b.classList.remove("active"));
     if (btn) btn.classList.add("active");
-    loadStockChart(currentChartSymbol, currentTimeframe);
+    loadStockChart(currentChartSymbol, currentTimeframe, currentChartExchange);
 }
 
 function toggleForecastProjection() {
     show5dProjection = !show5dProjection;
     const btn = document.getElementById("btnToggleForecast");
     if (btn) {
-        btn.textContent = show5dProjection ? "5D FORECAST CONE: ON" : "5D FORECAST CONE: OFF";
+        btn.textContent = show5dProjection ? "5D volatility cone: ON" : "5D volatility cone: OFF";
         btn.style.color = show5dProjection ? "var(--accent-cyan)" : "var(--text-muted)";
     }
     if (currentChartData) {
@@ -319,27 +495,31 @@ function toggleForecastProjection() {
     }
 }
 
-async function loadStockChart(symbol, period = "3mo") {
-    const cleanSym = (symbol || "RELIANCE").toUpperCase().replace(".NS", "").trim();
-    currentChartSymbol = cleanSym;
-
+async function loadStockChart(symbol, period = "3mo", exchange = "", announce = false) {
+    const requested = (symbol || "RELIANCE").trim();
+    const requestId = ++chartRequestId;
     const subTitle = document.getElementById("chartSubtitle");
     if (subTitle) {
-        subTitle.textContent = `Loading institutional price data & 5-day predictive trajectory for ${cleanSym}...`;
+        subTitle.textContent = `Loading institutional price data and the 5-day trajectory for ${requested}...`;
     }
 
     try {
-        const res = await fetch(`${API_BASE}/api/chart/${cleanSym}?period=${period}`);
+        const params = new URLSearchParams({ period: period || "3mo" });
+        if (exchange) params.set("exchange", exchange);
+        const res = await fetch(`${API_BASE}/api/chart/${encodeURIComponent(requested)}?${params.toString()}`);
+        if (requestId !== chartRequestId) return;
         if (!res.ok) {
-            throw new Error(`Price history unavailable for ${cleanSym}`);
+            throw new Error(await apiErrorDetail(res, `Price history unavailable for ${requested}`));
         }
         currentChartData = await res.json();
+        currentChartSymbol = currentChartData.symbol || requested.toUpperCase();
+        currentChartExchange = currentChartData.exchange || exchange || "NSE";
 
         // Update Stock Identity
         const heroSym = document.getElementById("heroStockSymbol");
         const heroName = document.getElementById("heroStockName");
-        if (heroSym) heroSym.textContent = cleanSym;
-        if (heroName) heroName.textContent = `${currentChartData.name || cleanSym} • NSE Equity`;
+        if (heroSym) heroSym.textContent = currentChartSymbol;
+        if (heroName) heroName.textContent = `${currentChartData.name || currentChartSymbol} • ${currentChartExchange} Equity`;
 
         // Update CMP & Change
         const cmpEl = document.getElementById("chartCmp");
@@ -355,49 +535,80 @@ async function loadStockChart(symbol, period = "3mo") {
             cmpChgEl.className = `cmp-change tabular-nums ${isPos ? "up" : "down"}`;
         }
 
-        // Update ATR & 5D Target
+        const bandLow = Number(currentChartData.expected_range_low);
+        const bandHigh = Number(currentChartData.expected_range_high);
+        const halfWidthPct = currentChartData.cmp > 0
+            ? (((bandHigh - bandLow) / 2) / currentChartData.cmp * 100).toFixed(2)
+            : "0.00";
+        const atrPct = currentChartData.cmp > 0
+            ? (Number(currentChartData.atr_14) / currentChartData.cmp * 100).toFixed(2)
+            : "0.00";
+
         const atrEl = document.getElementById("chartAtr");
         const targetEl = document.getElementById("chartTarget");
         if (atrEl) atrEl.textContent = `₹${currentChartData.atr_14}`;
         if (targetEl) {
-            const isTargetPos = (currentChartData.expected_appreciation_pct || 0) >= 0;
-            targetEl.textContent = `₹${Number(currentChartData.expected_target_price).toLocaleString("en-IN")} (${isTargetPos ? "+" : ""}${currentChartData.expected_appreciation_pct}%)`;
-            targetEl.style.color = isTargetPos ? "var(--emerald-bull)" : "var(--coral-bear)";
+            targetEl.textContent = `₹${Math.round(bandLow).toLocaleString("en-IN")} – ₹${Math.round(bandHigh).toLocaleString("en-IN")}`;
+            targetEl.style.color = "var(--text-primary)";
         }
 
-        // Update AI Prediction Intelligence Panel
         const aiTarget = document.getElementById("aiTargetPrice");
+        const aiLabel = document.getElementById("aiTargetLabel");
         const aiBounds = document.getElementById("aiRangeBounds");
         const aiStance = document.getElementById("aiStanceBadge");
         const aiScore = document.getElementById("aiScoreVal");
+        const aiRisk = document.getElementById("aiRiskVal");
+        const aiSource = document.getElementById("aiSourceVal");
+        const freshness = document.getElementById("aiDataFreshness");
+        const predicted = Number(currentChartData.expected_target_price);
+        const onBook = Boolean(currentChartData.scored) && Number.isFinite(predicted) && predicted > 0;
+        const direction = String(currentChartData.direction || "").toUpperCase();
 
-        if (aiTarget) {
-            aiTarget.textContent = `₹${Number(currentChartData.expected_target_price).toLocaleString("en-IN")}`;
-            aiTarget.className = `pred-target-val tabular-nums ${(currentChartData.expected_appreciation_pct || 0) >= 0 ? "up" : "down"}`;
-        }
         if (aiBounds) {
-            aiBounds.textContent = `₹${Math.round(currentChartData.expected_range_low)} to ₹${Math.round(currentChartData.expected_range_high)}`;
+            aiBounds.textContent = `₹${Math.round(bandLow)} to ₹${Math.round(bandHigh)}`;
         }
-        if (aiStance) {
-            const dir = (currentChartData.direction || "NEUTRAL").toUpperCase();
-            aiStance.textContent = dir;
-            aiStance.className = `stance-pill ${dir.includes("BULL") || dir.includes("UP") ? "bull" : (dir.includes("BEAR") || dir.includes("DOWN") ? "bear" : "neutral")}`;
+        if (onBook) {
+            const higher = predicted >= Number(currentChartData.cmp);
+            if (aiLabel) aiLabel.textContent = "5-day target";
+            if (aiTarget) {
+                aiTarget.textContent = `₹${predicted.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+                aiTarget.className = `pred-target-val tabular-nums ${higher ? "up" : "down"}`;
+            }
+            if (aiStance) {
+                aiStance.textContent = direction || "Scored";
+                aiStance.className = `stance-pill ${direction.includes("BULL") ? "bull" : (direction.includes("BEAR") ? "bear" : "neutral")}`;
+            }
+            if (aiScore && currentChartData.composite_score != null) {
+                aiScore.textContent = `${currentChartData.composite_score}/100`;
+            }
+            if (freshness) freshness.textContent = `Scored ${currentChartData.scored_on || "by the desk"}`;
+            if (aiSource) aiSource.textContent = "Today's book";
+        } else {
+            if (aiLabel) aiLabel.textContent = "Last close";
+            if (aiTarget) {
+                aiTarget.textContent = `₹${Number(currentChartData.cmp).toLocaleString("en-IN")}`;
+                aiTarget.className = "pred-target-val tabular-nums";
+            }
+            if (aiStance) {
+                aiStance.textContent = "Not scored";
+                aiStance.className = "stance-pill neutral";
+            }
+            if (aiScore) aiScore.textContent = "Not scored";
+            if (freshness) freshness.textContent = "Not a scored forecast";
+            if (aiSource) aiSource.textContent = "Price history only";
         }
-        if (aiScore) {
-            // Compute realistic score if present, else ATR-based quality index
-            aiScore.textContent = currentChartData.composite_score ? `${currentChartData.composite_score}/100` : "74/100";
-        }
+        if (aiRisk) aiRisk.textContent = `ATR ${atrPct}%`;
 
-        // Update Technical Analysis Indicators Strip
-        document.getElementById("panelGain").textContent = `${currentChartData.expected_appreciation_pct >= 0 ? "+" : ""}${currentChartData.expected_appreciation_pct}%`;
-        document.getElementById("panelGain").className = `ind-value ${currentChartData.expected_appreciation_pct >= 0 ? "up" : "down"}`;
-        document.getElementById("panelRange").textContent = `₹${Math.round(currentChartData.expected_range_low)} - ₹${Math.round(currentChartData.expected_range_high)}`;
+        const gainEl = document.getElementById("panelGain");
+        gainEl.textContent = `±${halfWidthPct}%`;
+        gainEl.className = "ind-value";
+        document.getElementById("panelRange").textContent = `₹${Math.round(bandLow)} - ₹${Math.round(bandHigh)}`;
         document.getElementById("panelSupport").textContent = `₹${currentChartData.support}`;
         document.getElementById("panelResistance").textContent = `₹${currentChartData.resistance}`;
 
         // Fetch Verified Fundamentals from backend
         try {
-            const fundRes = await fetch(`${API_BASE}/api/fundamentals/${cleanSym}`);
+            const fundRes = await fetch(`${API_BASE}/api/fundamentals/${encodeURIComponent(currentChartSymbol)}?exchange=${encodeURIComponent(currentChartExchange)}`);
             if (fundRes.ok) {
                 const fund = await fundRes.json();
                 const peEl = document.getElementById("panelPE");
@@ -414,13 +625,22 @@ async function loadStockChart(symbol, period = "3mo") {
         }
 
         if (subTitle) {
-            subTitle.textContent = `${cleanSym} Daily Close with 20-DMA and 5-Day ATR Volatility Cone Projection`;
+            const lastSession = histCloses.length ? currentChartData.dates[currentChartData.dates.length - 1] : "";
+            subTitle.textContent = `${currentChartSymbol} daily close through ${lastSession}, with 20-DMA and 5-day ATR volatility cone`;
         }
 
         renderPriceChart(currentChartData);
+        if (announce) {
+            showToast(`Loaded ${currentChartData.name || currentChartSymbol} (${currentChartExchange})`, "info");
+        }
     } catch (err) {
+        if (requestId !== chartRequestId) return;
         console.error("Chart load error:", err);
-        if (subTitle) subTitle.textContent = `Error loading chart for ${cleanSym}: ${err.message}`;
+        const stillShowing = currentChartData && currentChartData.symbol
+            ? ` Chart is still ${currentChartData.symbol}.`
+            : "";
+        if (subTitle) subTitle.textContent = `${err.message}${stillShowing}`;
+        showToast(err.message, "error");
     }
 }
 
@@ -432,32 +652,35 @@ function renderPriceChart(data) {
         priceChartInstance.destroy();
     }
 
-    const histLen = data.dates.length;
-    const allLabels = [...data.dates];
+    const dates = Array.isArray(data.dates) ? data.dates : [];
+    const histLen = dates.length;
+    const allLabels = [...dates];
 
-    // Historical Close series
-    const histCloseSeries = [...data.closes];
-    const sma20Series = [...data.sma20];
+    const histCloseSeries = Array.isArray(data.closes) ? [...data.closes] : [];
+    const sma20Series = Array.isArray(data.sma20) ? [...data.sma20] : new Array(histLen).fill(null);
+    const projectedDates = Array.isArray(data.projected_dates) ? data.projected_dates : [];
+    const projectedHighs = Array.isArray(data.projected_highs) ? data.projected_highs : [];
+    const projectedLows = Array.isArray(data.projected_lows) ? data.projected_lows : [];
+    const projectedTargets = Array.isArray(data.projected_targets) ? data.projected_targets : [];
 
-    // 5-Day Target Line (anchored at day 0 CMP)
-    const targetSeries = new Array(histLen - 1).fill(null);
-    targetSeries.push(data.cmp);
+    const targetSeries = new Array(Math.max(histLen - 1, 0)).fill(null);
+    if (projectedTargets.length && histLen > 0) targetSeries.push(data.cmp);
+    const coneUpperSeries = new Array(Math.max(histLen - 1, 0)).fill(null);
+    const coneLowerSeries = new Array(Math.max(histLen - 1, 0)).fill(null);
+    if (histLen > 0) {
+        coneUpperSeries.push(data.cmp);
+        coneLowerSeries.push(data.cmp);
+    }
 
-    // ATR Upper and Lower Boundaries
-    const coneUpperSeries = new Array(histLen - 1).fill(null);
-    coneUpperSeries.push(data.cmp);
-
-    const coneLowerSeries = new Array(histLen - 1).fill(null);
-    coneLowerSeries.push(data.cmp);
-
-    if (show5dProjection && data.projected_dates) {
-        data.projected_dates.forEach((d, idx) => {
-            allLabels.push(`5D: ${d.slice(5)}`);
+    if (show5dProjection) {
+        projectedDates.forEach((d, idx) => {
+            const label = typeof d === "string" ? d.slice(5) : "";
+            allLabels.push(`5D: ${label}`);
             histCloseSeries.push(null);
             sma20Series.push(null);
-            targetSeries.push(data.projected_targets[idx]);
-            coneUpperSeries.push(data.projected_highs[idx]);
-            coneLowerSeries.push(data.projected_lows[idx]);
+            if (projectedTargets.length) targetSeries.push(projectedTargets[idx] ?? null);
+            coneUpperSeries.push(projectedHighs[idx] ?? null);
+            coneLowerSeries.push(projectedLows[idx] ?? null);
         });
     }
 
@@ -467,19 +690,19 @@ function renderPriceChart(data) {
         {
             label: "Historical Close (₹)",
             data: histCloseSeries,
-            borderColor: isLight ? "#047857" : "#10B981",
-            backgroundColor: isLight ? "rgba(4, 120, 87, 0.08)" : "rgba(16, 185, 129, 0.08)",
+            borderColor: cssVar("--gain"),
+            backgroundColor: cssVar("--chart-hist-bg"),
             borderWidth: 2,
             pointRadius: 0,
             pointHoverRadius: 4,
-            pointHoverBackgroundColor: isLight ? "#047857" : "#10B981",
+            pointHoverBackgroundColor: cssVar("--gain"),
             fill: true,
             tension: 0.1
         },
         {
             label: "20-DMA (₹)",
             data: sma20Series,
-            borderColor: isLight ? "#B45309" : "#F59E0B",
+            borderColor: cssVar("--warn"),
             borderWidth: 1.5,
             borderDash: [4, 4],
             pointRadius: 0,
@@ -487,33 +710,35 @@ function renderPriceChart(data) {
         }
     ];
 
-    if (show5dProjection) {
-        datasets.push(
-            {
-                label: "5-Day Target Trajectory (₹)",
+    if (show5dProjection && projectedDates.length) {
+        if (projectedTargets.length) {
+            datasets.push({
+                label: "Desk target (₹)",
                 data: targetSeries,
-                borderColor: isLight ? "#1E293B" : "#D2F829",
+                borderColor: cssVar("--accent"),
                 borderWidth: 2.5,
                 borderDash: [6, 3],
                 pointRadius: 3,
-                pointBackgroundColor: isLight ? "#1E293B" : "#D2F829",
+                pointBackgroundColor: cssVar("--accent"),
                 fill: false,
                 tension: 0.1
-            },
+            });
+        }
+        datasets.push(
             {
                 label: "ATR Upper Volatility Band (₹)",
                 data: coneUpperSeries,
-                borderColor: isLight ? "rgba(4, 120, 87, 0.28)" : "rgba(210, 248, 41, 0.28)",
+                borderColor: cssVar("--chart-cone-border"),
                 borderWidth: 1,
                 borderDash: [2, 2],
                 pointRadius: 0,
                 fill: "+1",
-                backgroundColor: isLight ? "rgba(4, 120, 87, 0.07)" : "rgba(210, 248, 41, 0.06)"
+                backgroundColor: cssVar("--chart-cone")
             },
             {
                 label: "ATR Lower Support Band (₹)",
                 data: coneLowerSeries,
-                borderColor: isLight ? "rgba(4, 120, 87, 0.28)" : "rgba(210, 248, 41, 0.28)",
+                borderColor: cssVar("--chart-cone-border"),
                 borderWidth: 1,
                 borderDash: [2, 2],
                 pointRadius: 0,
@@ -540,10 +765,10 @@ function renderPriceChart(data) {
                     display: false
                 },
                 tooltip: {
-                    backgroundColor: isLight ? "#FFFFFF" : "#181A1F",
-                    titleColor: isLight ? "#047857" : "#D2F829",
-                    bodyColor: isLight ? "#151618" : "#F3F4F6",
-                    borderColor: isLight ? "#CCC5B6" : "#333744",
+                    backgroundColor: cssVar("--chart-tooltip-bg"),
+                    titleColor: cssVar("--accent"),
+                    bodyColor: cssVar("--text-primary"),
+                    borderColor: cssVar("--chart-tooltip-border"),
                     borderWidth: 1,
                     padding: 10,
                     titleFont: { family: "JetBrains Mono", size: 11 },
@@ -558,17 +783,17 @@ function renderPriceChart(data) {
             },
             scales: {
                 x: {
-                    grid: { color: isLight ? "#E6E2D8" : "#242732" },
+                    grid: { color: cssVar("--chart-grid") },
                     ticks: {
-                        color: isLight ? "#484E59" : "#9DA3AF",
+                        color: cssVar("--text-muted"),
                         font: { family: "JetBrains Mono", size: 9 },
                         maxTicksLimit: 12
                     }
                 },
                 y: {
-                    grid: { color: isLight ? "#E6E2D8" : "#242732" },
+                    grid: { color: cssVar("--chart-grid") },
                     ticks: {
-                        color: isLight ? "#484E59" : "#9DA3AF",
+                        color: cssVar("--text-muted"),
                         font: { family: "JetBrains Mono", size: 10 },
                         callback: function(val) { return "₹" + val.toLocaleString("en-IN"); }
                     }
@@ -630,9 +855,10 @@ async function fetchWatchlistQuote(sym) {
         if (pEl && q.close_price) {
             pEl.textContent = `₹${Number(q.close_price).toLocaleString("en-IN")}`;
         }
-        if (cEl && q.change_pct != null) {
-            const isPos = q.change_pct >= 0;
-            cEl.textContent = `${isPos ? "+" : ""}${q.change_pct}%`;
+        const changePct = q.day_change_pct != null ? q.day_change_pct : q.change_pct;
+        if (cEl && changePct != null) {
+            const isPos = changePct >= 0;
+            cEl.textContent = `${isPos ? "+" : ""}${changePct}%`;
             cEl.className = `wl-chg tabular-nums ${isPos ? "up" : "down"}`;
         }
     } catch (e) {
@@ -716,15 +942,15 @@ function renderRecommendations(recs) {
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                     <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
-                VERIFIED DELIVERY
+                Verified delivery
                </span>`
-            : `<span class="badge-proxy-estimate" title="Estimated proxy delivery metrics — awaiting official exchange settlement">
+            : `<span class="badge-proxy-estimate" title="Estimated proxy delivery metrics - awaiting official exchange settlement">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"></circle>
                     <line x1="12" y1="8" x2="12" y2="12"></line>
                     <line x1="12" y1="16" x2="12.01" y2="16"></line>
                 </svg>
-                PROXY / ESTIMATE
+                Proxy estimate
                </span>`;
 
         return `
@@ -753,14 +979,14 @@ function renderRecommendations(recs) {
                         <label>Actual LTP</label>
                         <span class="tabular-nums ${Number(liveChangePct) >= 0 ? 'up' : 'down'}">
                             ₹${actualPrice.toLocaleString("en-IN", {minimumFractionDigits: 1})}
-                            <small style="font-size: 9.5px;">(${Number(liveChangePct) >= 0 ? '+' : ''}${liveChangePct}%)</small>
+                            <small style="font-size: 12px;">(${Number(liveChangePct) >= 0 ? '+' : ''}${liveChangePct}%)</small>
                         </span>
                     </div>
                     <div class="metric-box">
                         <label>5D Target</label>
                         <span class="tabular-nums ${Number(r.expected_appreciation_pct) >= 0 ? 'up' : 'down'}">
                             ₹${targetPrice.toLocaleString("en-IN", {minimumFractionDigits: 1})}
-                            <small style="font-size: 9.5px; color: var(--text-muted);">(Net: ${netExpectedPct}%)</small>
+                            <small style="font-size: 12px; color: var(--text-muted);">(Net: ${netExpectedPct}%)</small>
                         </span>
                     </div>
                     <div class="metric-box">
@@ -785,7 +1011,7 @@ function renderRecommendations(recs) {
                         `}
                         <div class="progress-current-marker" style="left: ${actualPct}%;" title="Live Actual Market Price: ₹${actualPrice}"></div>
                     </div>
-                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 5px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 5px;">
                         <span>5D Low: ₹${Math.round(r.expected_range_low || stopLoss)}</span>
                         <span style="color: var(--text-primary); font-weight: 700;">
                             LTP: ${Math.round(actualPct)}% of Target Path
@@ -796,16 +1022,16 @@ function renderRecommendations(recs) {
 
                 <!-- Data Provenance & Institutional Flow Badges -->
                 <div style="margin: 8px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
-                    <span style="font-size: 10px; font-family: var(--font-mono); color: var(--text-secondary); background: var(--bg-elevated); padding: 2px 7px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);">
+                    <span style="font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); background: var(--bg-elevated); padding: 2px 7px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);">
                         Deliv: <strong style="color: var(--text-primary);">${r.deliv_per ? Number(r.deliv_per).toFixed(1) : '45.0'}%</strong>
                     </span>
-                    <span style="font-size: 10px; font-family: var(--font-mono); color: var(--text-secondary); background: var(--bg-elevated); padding: 2px 7px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);">
+                    <span style="font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); background: var(--bg-elevated); padding: 2px 7px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);">
                         Surge: <strong style="color: var(--text-primary);">${r.deliv_surge ? Number(r.deliv_surge).toFixed(1) : '1.0'}x</strong>
                     </span>
-                    <span style="font-size: 10px; font-family: var(--font-mono); color: var(--accent-mint); background: var(--accent-mint-bg); padding: 2px 7px; border-radius: var(--radius-xs); border: 1px solid var(--accent-mint-border);">
+                    <span style="font-size: 12px; font-family: var(--font-mono); color: var(--accent-mint); background: var(--accent-mint-bg); padding: 2px 7px; border-radius: var(--radius-xs); border: 1px solid var(--accent-mint-border);">
                         CMF-20: <strong>${r.cmf_20 != null ? (Number(r.cmf_20) > 0 ? '+' : '') + Number(r.cmf_20).toFixed(2) : '+0.12'}</strong>
                     </span>
-                    <span style="font-size: 10.5px; font-family: var(--font-mono); color: var(--text-primary); margin-left: auto;">
+                    <span style="font-size: 12px; font-family: var(--font-mono); color: var(--text-primary); margin-left: auto;">
                         Score: <strong>${r.composite_score != null ? r.composite_score : '--'}/100</strong>
                     </span>
                 </div>
@@ -822,7 +1048,7 @@ function renderRecommendations(recs) {
 
                 ${r.supporting_reasons && r.supporting_reasons.length > 0 ? `
                     <div style="margin-top: 8px;">
-                        <strong style="font-size: 10.5px; color: var(--text-primary); text-transform: uppercase;">Supporting Catalysts:</strong>
+                        <strong style="font-size: 12px; color: var(--text-primary);">Supporting Catalysts:</strong>
                         <ul class="reasons-list">
                             ${r.supporting_reasons.slice(0, 3).map(reason => `<li>${reason}</li>`).join("")}
                         </ul>
@@ -837,7 +1063,7 @@ function renderRecommendations(recs) {
             </div>
 
             <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-                <span style="font-size: 10px; color: var(--text-dim); font-family: var(--font-mono);">
+                <span style="font-size: 12px; color: var(--text-dim); font-family: var(--font-mono);">
                     Model: ${r.model_version || "v2.3-HighAlphaQuant"} &bull; Friction: 0.30%
                 </span>
                 <div style="display: flex; gap: 6px; flex-wrap: wrap;">
@@ -914,15 +1140,15 @@ function renderPredictedTrackerTable(recs) {
         // Status badge
         let statusBadge = "";
         if (actualPrice >= targetPrice && targetPrice > refPrice) {
-            statusBadge = `<span class="stance-pill bull" style="font-size: 10px; font-weight: 700;">TARGET HIT</span>`;
+            statusBadge = `<span class="stance-pill bull" style="font-size: 12px; font-weight: 700;">Target hit</span>`;
         } else if (actualPrice <= stopLoss && stopLoss < refPrice) {
-            statusBadge = `<span class="stance-pill bear" style="font-size: 10px; font-weight: 700;">STOP-LOSS BOUNDARY</span>`;
+            statusBadge = `<span class="stance-pill bear" style="font-size: 12px; font-weight: 700;">Stop-loss</span>`;
         } else if (Number(liveChangePct) > 0.5) {
-            statusBadge = `<span class="stance-pill bull" style="font-size: 10px; font-weight: 700;">IN PROFIT (+${liveChangePct}%)</span>`;
+            statusBadge = `<span class="stance-pill bull" style="font-size: 12px; font-weight: 700;">IN PROFIT (+${liveChangePct}%)</span>`;
         } else if (Number(liveChangePct) < -0.5) {
-            statusBadge = `<span class="stance-pill bear" style="font-size: 10px; font-weight: 700;">PULLBACK (${liveChangePct}%)</span>`;
+            statusBadge = `<span class="stance-pill bear" style="font-size: 12px; font-weight: 700;">PULLBACK (${liveChangePct}%)</span>`;
         } else {
-            statusBadge = `<span class="stance-pill neutral" style="font-size: 10px; font-weight: 700;">CONSOLIDATING</span>`;
+            statusBadge = `<span class="stance-pill neutral" style="font-size: 12px; font-weight: 700;">Consolidating</span>`;
         }
 
         const barWidth = Math.min(100, Math.max(4, Math.abs(progressTowardsTarget)));
@@ -936,7 +1162,7 @@ function renderPredictedTrackerTable(recs) {
                             <strong style="color: var(--text-primary); font-family: var(--font-mono); font-size: 13px;">${r.symbol}</strong>
                             <div style="font-size: 11px; color: var(--text-muted);">${r.name || r.sector || "NSE"}</div>
                         </div>
-                        <span class="stance-pill ${Number(r.expected_appreciation_pct) >= 0 ? 'bull' : 'bear'}" style="font-size: 9.5px; padding: 2px 6px;">
+                        <span class="stance-pill ${Number(r.expected_appreciation_pct) >= 0 ? 'bull' : 'bear'}" style="font-size: 12px; padding: 2px 6px;">
                             ${r.direction || 'SWING'}
                         </span>
                     </div>
@@ -944,13 +1170,13 @@ function renderPredictedTrackerTable(recs) {
                 <td class="num font-mono">₹${refPrice.toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}</td>
                 <td class="num font-mono" style="color: var(--accent-mint); font-weight: 600;">
                     ₹${targetPrice.toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
-                    <div style="font-size: 10px; color: var(--text-muted);">+${r.expected_appreciation_pct}%</div>
+                    <div style="font-size: 12px; color: var(--text-muted);">+${r.expected_appreciation_pct}%</div>
                 </td>
                 <td class="num font-mono">
                     <span class="${isUp ? 'up' : 'down'}" style="font-weight: 700;">
                         ₹${actualPrice.toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
                     </span>
-                    <div style="font-size: 10px;" class="${isUp ? 'up' : 'down'}">
+                    <div style="font-size: 12px;" class="${isUp ? 'up' : 'down'}">
                         ${isUp ? '+' : ''}${liveChangePct}%
                     </div>
                 </td>
@@ -983,7 +1209,7 @@ function renderPredictedTrackerTable(recs) {
 }
 
 async function triggerScan() {
-    showScanLoader("RE-SCREENING EQUITIES UNIVERSE", "Evaluating momentum & 14-day ATR volatility cones across all 58 NSE leaders...");
+    showScanLoader("Screening stocks", "Scoring momentum and 14-day ATR volatility across every liquid NSE and BSE listing.", "working");
     try {
         const res = await fetch(`${API_BASE}/api/recommendations/scan`, { method: "POST" });
         if (!res.ok) {
@@ -997,9 +1223,13 @@ async function triggerScan() {
             }
             throw new Error(errorMsg);
         }
-        await res.json();
+        const scanResult = await res.json();
         await loadRecommendations();
-        showToast("Market screener completed successfully!", "success");
+        const saved = Number(scanResult.generated_count || 0);
+        showToast(
+            saved ? `Scan saved ${saved} names for today.` : "This scan saved no names.",
+            saved ? "success" : "info"
+        );
     } catch (err) {
         showToast("Scan failed: " + err.message, "error");
     } finally {
@@ -1008,7 +1238,7 @@ async function triggerScan() {
 }
 
 async function resetRecommendations() {
-    showScanLoader("ROTATING STOCK PICKS", "Purging cached picks and evaluating all 58 NSE candidates...");
+    showScanLoader("Rotating picks", "Clearing cached picks and re-scoring the full NSE and BSE universe.", "working");
     try {
         const res = await fetch(`${API_BASE}/api/recommendations/reset`, { method: "POST" });
         if (!res.ok) {
@@ -1125,7 +1355,7 @@ function renderPortfolio(data) {
             </td>
             <td>
                 <span class="badge ${h.risk_level === 'Low' ? 'badge-low' : 'badge-medium'}">${h.risk_level}</span>
-                ${h.alerts && h.alerts.length > 0 ? `<div style="font-size: 10px; color: var(--accent-coral); margin-top: 2px;">${h.alerts[0]}</div>` : ""}
+                ${h.alerts && h.alerts.length > 0 ? `<div style="font-size: 12px; color: var(--accent-coral); margin-top: 2px;">${h.alerts[0]}</div>` : ""}
             </td>
             <td>
                 <div class="row-actions-group" style="display: flex; gap: 4px; justify-content: flex-end;">
@@ -1168,7 +1398,7 @@ function renderPortfolioGrowthChart(data) {
                     {
                         label: "Invested Capital (₹)",
                         data: [0, 0],
-                        backgroundColor: isLight ? "#E2E8F0" : "#1E293B",
+                        backgroundColor: cssVar("--bg-elevated"),
                         borderRadius: 4
                     }
                 ]
@@ -1184,7 +1414,7 @@ function renderPortfolioGrowthChart(data) {
                     y: { display: false },
                     x: {
                         grid: { display: false },
-                        ticks: { color: isLight ? "#64748B" : "#94A3B8" }
+                        ticks: { color: cssVar("--text-muted") }
                     }
                 }
             }
@@ -1204,7 +1434,7 @@ function renderPortfolioGrowthChart(data) {
     }
 
     const gridColor = isLight ? "rgba(0, 0, 0, 0.05)" : "rgba(255, 255, 255, 0.05)";
-    const tickColor = isLight ? "#64748B" : "#94A3B8";
+    const tickColor = cssVar("--text-muted");
 
     portfolioChartInstance = new Chart(canvas, {
         type: "bar",
@@ -1214,8 +1444,8 @@ function renderPortfolioGrowthChart(data) {
                 {
                     label: "Invested Capital Cost Basis (₹)",
                     data: investedData,
-                    backgroundColor: isLight ? "#CBD5E1" : "#334155",
-                    borderColor: isLight ? "#94A3B8" : "#475569",
+                    backgroundColor: cssVar("--bg-elevated"),
+                    borderColor: cssVar("--border-highlight"),
                     borderWidth: 1,
                     borderRadius: 4,
                     barPercentage: 0.6,
@@ -1226,11 +1456,11 @@ function renderPortfolioGrowthChart(data) {
                     data: marketValData,
                     backgroundColor: marketValData.map((val, idx) => {
                         const inv = investedData[idx];
-                        return val >= inv ? (isLight ? "rgba(4, 120, 87, 0.85)" : "rgba(16, 185, 129, 0.85)") : (isLight ? "rgba(225, 29, 72, 0.85)" : "rgba(244, 63, 94, 0.85)");
+                        return val >= inv ? cssVar("--gain") : cssVar("--loss");
                     }),
                     borderColor: marketValData.map((val, idx) => {
                         const inv = investedData[idx];
-                        return val >= inv ? (isLight ? "#047857" : "#10B981") : (isLight ? "#E11D48" : "#F43F5E");
+                        return val >= inv ? (cssVar("--gain")) : (cssVar("--loss"));
                     }),
                     borderWidth: 1,
                     borderRadius: 4,
@@ -1260,10 +1490,10 @@ function renderPortfolioGrowthChart(data) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: isLight ? "#FFFFFF" : "#131722",
-                    titleColor: isLight ? "#0F172A" : "#FFFFFF",
-                    bodyColor: isLight ? "#334155" : "#CBD5E1",
-                    borderColor: isLight ? "#E2E8F0" : "#2A2E39",
+                    backgroundColor: cssVar("--chart-tooltip-bg"),
+                    titleColor: cssVar("--text-primary"),
+                    bodyColor: cssVar("--text-secondary"),
+                    borderColor: cssVar("--chart-tooltip-border"),
                     borderWidth: 1,
                     padding: 10,
                     boxPadding: 4,
@@ -1581,7 +1811,7 @@ async function loadPaperTradingScorecard() {
             const cmp = row.current_price != null ? row.current_price : (row.signal_price || entryPrice);
             const cmpChange = row.current_change_pct != null ? row.current_change_pct : 0.0;
             const cmpChangeClass = cmpChange >= 0 ? "up" : "down";
-            const cmpChangeStr = `<span style="font-size: 10px; margin-left: 4px;" class="${cmpChangeClass}">(${cmpChange >= 0 ? '+' : ''}${cmpChange.toFixed(2)}%)</span>`;
+            const cmpChangeStr = `<span style="font-size: 12px; margin-left: 4px;" class="${cmpChangeClass}">(${cmpChange >= 0 ? '+' : ''}${cmpChange.toFixed(2)}%)</span>`;
 
             // 2. Real Actual 5D Peak
             let peakDisplay = '<span style="color: var(--text-muted);">--</span>';
@@ -1590,22 +1820,22 @@ async function loadPaperTradingScorecard() {
                 const peakColor = isPeakBeaten ? 'var(--accent-mint)' : 'var(--text-primary)';
                 peakDisplay = `<span style="color: ${peakColor}; font-weight: ${isPeakBeaten ? '700' : '400'};">₹${Number(row.actual_peak_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}</span>`;
             } else if (row.status === 'PENDING_OPEN') {
-                peakDisplay = '<span style="color: var(--text-muted); font-size: 10.5px;">-- (Awaiting Entry)</span>';
+                peakDisplay = '<span style="color: var(--text-muted); font-size: 12px;">-- (Awaiting Entry)</span>';
             } else if (row.status === 'REJECTED') {
-                peakDisplay = '<span style="color: var(--text-muted); font-size: 10.5px;">-- (Rejected)</span>';
+                peakDisplay = '<span style="color: var(--text-muted); font-size: 12px;">-- (Rejected)</span>';
             } else if (row.status === 'ACTIVE') {
                 const basePrice = entryPrice || row.signal_price;
-                peakDisplay = basePrice ? `<span style="color: var(--text-secondary); font-size: 10.5px;">₹${Number(basePrice).toLocaleString('en-IN', {minimumFractionDigits: 1})} (In Flight)</span>` : '<span style="color: var(--text-muted);">--</span>';
+                peakDisplay = basePrice ? `<span style="color: var(--text-secondary); font-size: 12px;">₹${Number(basePrice).toLocaleString('en-IN', {minimumFractionDigits: 1})} (In Flight)</span>` : '<span style="color: var(--text-muted);">--</span>';
             }
 
             // 3. Entry Price & Planned Target distinction
             const refPrice = row.planned_entry_price || row.signal_price;
             const entryDisplay = row.entry_price 
                 ? `₹${Number(row.entry_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}`
-                : `<span style="color: var(--text-muted); font-size: 10.5px;">Pending Open (Ref ₹${Number(refPrice).toLocaleString('en-IN', {minimumFractionDigits: 1})})</span>`;
+                : `<span style="color: var(--text-muted); font-size: 12px;">Pending Open (Ref ₹${Number(refPrice).toLocaleString('en-IN', {minimumFractionDigits: 1})})</span>`;
 
             const targetGain = refPrice && refPrice > 0 ? (((row.planned_target_price - refPrice) / refPrice) * 100).toFixed(1) : null;
-            const targetGainStr = targetGain ? ` <span style="font-size: 10px; color: var(--accent-mint); font-weight: normal;">(+${targetGain}%)</span>` : '';
+            const targetGainStr = targetGain ? ` <span style="font-size: 12px; color: var(--accent-mint); font-weight: normal;">(+${targetGain}%)</span>` : '';
 
             return `
                 <tr>
@@ -1636,7 +1866,7 @@ async function loadPaperTradingScorecard() {
                         ${peakDisplay}
                     </td>
                     <td class="num font-mono">
-                        ${row.exit_price ? '₹' + Number(row.exit_price).toLocaleString('en-IN', {minimumFractionDigits: 1}) : (row.status === 'ACTIVE' ? '<span style="color: var(--accent-mint);">Holding</span>' : (row.status === 'PENDING_OPEN' ? '<span style="color: var(--text-muted); font-size: 10.5px;">Awaiting Open</span>' : '<span style="color: var(--text-muted); font-size: 10.5px;">--</span>'))}
+                        ${row.exit_price ? '₹' + Number(row.exit_price).toLocaleString('en-IN', {minimumFractionDigits: 1}) : (row.status === 'ACTIVE' ? '<span style="color: var(--accent-mint);">Holding</span>' : (row.status === 'PENDING_OPEN' ? '<span style="color: var(--text-muted); font-size: 12px;">Awaiting Open</span>' : '<span style="color: var(--text-muted); font-size: 12px;">--</span>'))}
                     </td>
                     <td class="num font-mono ${netClass}" style="font-weight: 700;">
                         ${row.status === 'CLOSED' ? netStr : (row.status === 'REJECTED' ? '<span style="color: var(--text-muted);">0.00%</span>' : '<span style="color: var(--text-secondary);">Pending T+5</span>')}
@@ -1728,7 +1958,7 @@ function renderBacktestBaselines(bt) {
 
 async function runBacktestSimulation() {
     const lookback = document.getElementById("backtestLookbackSelect").value || "6mo";
-    showScanLoader("RUNNING HISTORICAL BACKTEST", `Simulating out-of-sample periods with 0.15% friction (${lookback})...`);
+    showScanLoader("Running backtest", `Simulating out-of-sample periods with 0.15% friction (${lookback}).`, "working");
     try {
         const res = await fetch(`${API_BASE}/api/backtest/run?lookback=${lookback}`, { method: "POST" });
         if (!res.ok) throw new Error("Simulation failed");
@@ -1792,7 +2022,7 @@ function renderScorecard(data) {
         const curPrice = e.current_price != null ? e.current_price : (e.actual_end_price || e.original_reference_price);
         const curChange = e.current_change_pct != null ? e.current_change_pct : 0.0;
         const curChangeClass = curChange >= 0 ? "up" : "down";
-        const curChangeStr = `<span style="font-size: 10px; margin-left: 4px;" class="${curChangeClass}">(${curChange >= 0 ? '+' : ''}${curChange.toFixed(2)}%)</span>`;
+        const curChangeStr = `<span style="font-size: 12px; margin-left: 4px;" class="${curChangeClass}">(${curChange >= 0 ? '+' : ''}${curChange.toFixed(2)}%)</span>`;
 
         return `
             <tr>
@@ -1868,12 +2098,23 @@ function closeTransactionModal() {
 
 async function onStockChange(val) {
     if (!val) return;
-    const cleanSym = val.split("•")[0].split("-")[0].trim().toUpperCase();
+    const cleanSym = val.split("•")[0].trim();
     if (cleanSym.length >= 2) {
         try {
-            const res = await fetch(`${API_BASE}/api/quote/${cleanSym}`);
+            const res = await fetch(`${API_BASE}/api/quote/${encodeURIComponent(cleanSym)}`);
             if (res.ok) {
                 const quote = await res.json();
+                const symbolInput = document.getElementById("txSymbol");
+                if (
+                    symbolInput &&
+                    quote &&
+                    quote.is_valid &&
+                    quote.symbol &&
+                    cleanSym.includes(" ") &&
+                    cleanSym.toUpperCase() !== quote.symbol
+                ) {
+                    symbolInput.value = quote.symbol;
+                }
                 if (quote && quote.close_price) {
                     const priceInput = document.getElementById("txPrice");
                     if (priceInput) {
@@ -1912,7 +2153,7 @@ function recalcFees() {
 async function submitTransaction(e) {
     e.preventDefault();
     const rawVal = document.getElementById("txSymbol").value.trim();
-    const symbol = rawVal.split("•")[0].split("-")[0].trim().toUpperCase();
+    const symbol = rawVal.split("•")[0].trim().toUpperCase();
     const action = document.getElementById("txType").value;
     const dateVal = document.getElementById("txDate").value;
     const price = parseFloat(document.getElementById("txPrice").value);
@@ -1958,7 +2199,8 @@ function openDebateModalFromChart() {
 }
 
 async function openDebateModal(symbol) {
-    const cleanSym = (symbol || currentChartSymbol).toUpperCase().replace(".NS", "").trim();
+    const cleanSym = (symbol || currentChartSymbol).toUpperCase().replace(".NS", "").replace(".BO", "").trim();
+    const exchange = cleanSym === currentChartSymbol ? (currentChartExchange || "NSE") : "NSE";
     const modal = document.getElementById("debateModal");
     const subTitle = document.getElementById("debateModalSubtitle");
     const body = document.getElementById("debateModalBody");
@@ -1967,8 +2209,9 @@ async function openDebateModal(symbol) {
     if (subTitle) subTitle.textContent = `Analyzing ${cleanSym} with 7 Parallel AI Specialist Desks...`;
     if (body) {
         body.innerHTML = `
-            <div style="text-align: center; padding: 48px; color: var(--text-muted);">
-                <div style="font-size: 15px; color: var(--accent-cyan); margin-bottom: 8px;">Summoning 7 AI Analyst Desks for ${cleanSym}...</div>
+            <div class="ps-orb-block" style="padding: 40px 16px;">
+                ${orbHtml("working")}
+                <div style="font-size: 15px; color: var(--text-primary);">Consulting 7 analyst desks on ${cleanSym}</div>
                 <div style="font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary);">
                     Running Technical, Fundamental, Options Flow, News, Sentiment, Sector, and Risk evaluations
                 </div>
@@ -1977,8 +2220,8 @@ async function openDebateModal(symbol) {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/api/debate/${cleanSym}`);
-        if (!res.ok) throw new Error("Debate synthesis failed");
+        const res = await fetch(`${API_BASE}/api/debate/${encodeURIComponent(cleanSym)}?exchange=${encodeURIComponent(exchange)}`);
+        if (!res.ok) throw new Error(await apiErrorDetail(res, "Analysis unavailable for this listing"));
         const data = await res.json();
         renderDebateContent(data);
     } catch (err) {
@@ -2019,7 +2262,7 @@ function renderDebateContent(data) {
         <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 10px;">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Facilitator Consensus:</span>
+                    <span style="font-size: 11px; font-weight: 600; color: var(--text-muted);">Facilitator Consensus:</span>
                     <span class="stance-pill ${isBullVerdict ? 'bull' : (isBearVerdict ? 'bear' : 'neutral')}">${debate.facilitator_verdict || "ACCUMULATE / SWING"}</span>
                 </div>
                 <div style="font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono); display: flex; align-items: center; gap: 6px;">
@@ -2032,26 +2275,26 @@ function renderDebateContent(data) {
             </p>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; font-family: var(--font-mono); font-size: 11.5px;">
                 <div style="background: var(--bg-elevated); padding: 9px 12px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);">
-                    <div style="color: var(--text-muted); font-size: 9.5px; font-weight: 600;">SUGGESTED ENTRY</div>
+                    <div style="color: var(--text-muted); font-size: 12px; font-weight: 600;">Suggested entry</div>
                     <div style="color: var(--text-primary); font-weight: 700; margin-top: 3px; font-size: 13px;">${tradePlan.suggested_entry || "CMP"}</div>
                 </div>
                 <div style="background: var(--bg-elevated); padding: 9px 12px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);">
-                    <div style="color: var(--accent-coral); font-size: 9.5px; font-weight: 600;">INVALIDATION (SL)</div>
+                    <div style="color: var(--accent-coral); font-size: 12px; font-weight: 600;">Invalidation (SL)</div>
                     <div style="color: var(--accent-coral); font-weight: 700; margin-top: 3px; font-size: 13px;">${tradePlan.downside_invalidation || "Lower ATR Band"}</div>
                 </div>
                 <div style="background: var(--bg-elevated); padding: 9px 12px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);">
-                    <div style="color: var(--accent-mint); font-size: 9.5px; font-weight: 600;">5-DAY TARGET (TP)</div>
+                    <div style="color: var(--accent-mint); font-size: 12px; font-weight: 600;">5-day target (TP)</div>
                     <div style="color: var(--accent-mint); font-weight: 700; margin-top: 3px; font-size: 13px;">${tradePlan.target_5d || "Target Price"}</div>
                 </div>
                 <div style="background: var(--bg-elevated); padding: 9px 12px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);">
-                    <div style="color: var(--accent-lime); font-size: 9.5px; font-weight: 600;">HORIZON</div>
+                    <div style="color: var(--accent-lime); font-size: 12px; font-weight: 600;">Horizon</div>
                     <div style="color: var(--accent-lime); font-weight: 700; margin-top: 3px; font-size: 13px;">5 Sessions</div>
                 </div>
             </div>
         </div>
 
         <div>
-            <div style="font-size: 12px; font-weight: 700; color: var(--text-primary); text-transform: uppercase; margin-bottom: 8px; font-family: var(--font-display); display: flex; align-items: center; gap: 8px;">
+            <div style="font-size: 12px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; font-family: var(--font-display); display: flex; align-items: center; gap: 8px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
                 7 Parallel Specialist Quantitative Desks
             </div>
@@ -2110,7 +2353,8 @@ function openIntelligenceModalFromChart() {
 }
 
 async function openStockIntelligenceModal(symbol) {
-    const cleanSym = (symbol || currentChartSymbol).toUpperCase().replace(".NS", "").trim();
+    const cleanSym = (symbol || currentChartSymbol).toUpperCase().replace(".NS", "").replace(".BO", "").trim();
+    const exchange = cleanSym === currentChartSymbol ? (currentChartExchange || "NSE") : "NSE";
     const modal = document.getElementById("intelligenceModal");
     const subTitle = document.getElementById("intelModalSubtitle");
     const body = document.getElementById("intelModalBody");
@@ -2119,9 +2363,12 @@ async function openStockIntelligenceModal(symbol) {
     if (subTitle) subTitle.textContent = `Scraping multi-provider news and calculating institutional money flow for ${cleanSym}...`;
 
     try {
-        const res = await fetch(`${API_BASE}/api/intelligence/${cleanSym}`);
-        if (!res.ok) throw new Error("Intelligence fetch failed");
+        const res = await fetch(`${API_BASE}/api/intelligence/${encodeURIComponent(cleanSym)}?exchange=${encodeURIComponent(exchange)}`);
+        if (!res.ok) throw new Error(await apiErrorDetail(res, "Market intel is unavailable for this listing"));
         const data = await res.json();
+        if (data && data.is_valid === false) {
+            throw new Error(data.error || "Live market data is unavailable for this listing.");
+        }
         renderIntelligenceContent(data);
     } catch (err) {
         if (body) {
@@ -2168,60 +2415,59 @@ function renderIntelligenceContent(data) {
 
     body.innerHTML = `
         <!-- TAPETIDE MACRO RADAR & BUILT-IN QUANTITATIVE ENGINES -->
-        <div style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(16, 185, 129, 0.08) 100%); border: 1px solid var(--accent-indigo); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 14px;">
+        <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-size: 11px; font-weight: 700; color: var(--accent-indigo); font-family: var(--font-display); display: flex; align-items: center; gap: 6px;">
-                    <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--accent-mint); box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);"></span>
-                    INSTITUTIONAL MACRO RADAR &amp; LOCAL PREDICTION ENGINES
+                <span style="font-size: 11px; font-weight: 700; color: var(--accent); font-family: var(--font-display); display: flex; align-items: center; gap: 6px;">
+                                        Macro and risk context
                 </span>
-                <span style="font-size: 9.5px; font-family: var(--font-mono); color: var(--text-muted); background: var(--bg-surface); padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border-subtle);">
-                    0 PER-STOCK CALLS &bull; 50 CALLS/DAY CEILING PROTECTED
+                <span style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted); background: var(--bg-surface); padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border-subtle);">
+                    0 per-stock calls, 50/day limit
                 </span>
             </div>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
                 <div style="background: var(--bg-surface); padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border-subtle);">
-                    <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">VOLATILITY CONE ENGINE</div>
+                    <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Volatility cone</div>
                     <div style="font-size: 13px; font-weight: 700; color: var(--accent-mint); font-family: var(--font-mono);">
                         ${opt.available && opt.iv_rank != null ? opt.iv_rank + '% (IV Rank)' : '14-Day ATR Math'}
                     </div>
-                    <div style="font-size: 9.5px; color: var(--text-secondary); margin-top: 2px;">
+                    <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
                         ${opt.available ? 'Tapetide IV Percentile: ' + opt.iv_percentile + '%' : 'Zero-Synthetic Local Cones'}
                     </div>
                 </div>
                 <div style="background: var(--bg-surface); padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border-subtle);">
-                    <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">SOLVENCY &amp; GOVERNANCE</div>
+                    <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Solvency and governance</div>
                     <div style="font-size: 13px; font-weight: 700; color: ${gov.is_high_risk ? 'var(--accent-coral)' : 'var(--accent-mint)'}; font-family: var(--font-mono);">
                         ${gov.available && gov.pledged_pct != null ? gov.pledged_pct + '% Pledged' : 'Solvency Gatekeeper'}
                     </div>
-                    <div style="font-size: 9.5px; color: var(--text-secondary); margin-top: 2px;">
+                    <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
                         ${gov.available ? gov.governance_flag : 'Balance Sheet D/E &amp; ROE Checked'}
                     </div>
                 </div>
                 <div style="background: var(--bg-surface); padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border-subtle);">
-                    <div style="font-size: 9.5px; color: var(--text-muted); font-family: var(--font-mono);">TAPETIDE FII / DII FLOW</div>
+                    <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Tapetide FII / DII flow</div>
                     <div style="font-size: 11px; font-weight: 700; color: var(--text-primary); font-family: var(--font-mono);">
-                        FII: ${macroFlow.fii_net_cr ? (macroFlow.fii_net_cr > 0 ? '+' : '') + Number(macroFlow.fii_net_cr).toLocaleString() + ' Cr' : '-₹44,649 Cr'}
+                        FII: ${macroFlow.fii_net_cr ? (macroFlow.fii_net_cr > 0 ? '+' : '') + Number(macroFlow.fii_net_cr).toLocaleString() + ' Cr' : 'unavailable'}
                     </div>
                     <div style="font-size: 11px; font-weight: 700; color: var(--accent-mint); font-family: var(--font-mono); margin-top: 2px;">
-                        DII: ${macroFlow.dii_net_cr ? (macroFlow.dii_net_cr > 0 ? '+' : '') + Number(macroFlow.dii_net_cr).toLocaleString() + ' Cr' : '+₹48,510 Cr'}
+                        DII: ${macroFlow.dii_net_cr ? (macroFlow.dii_net_cr > 0 ? '+' : '') + Number(macroFlow.dii_net_cr).toLocaleString() + ' Cr' : 'unavailable'}
                     </div>
                 </div>
         </div>
 
         <!-- ON-DEMAND AUDIT BAR -->
-        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); border: 1px dashed var(--border-subtle); border-radius: 4px; padding: 6px 12px; margin-bottom: 12px;">
-            <div style="font-size: 10.5px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 6px 12px; margin-bottom: 12px;">
+            <div style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
                 <span style="font-weight: 600; color: var(--text-secondary);">Derivatives &amp; Solvency Audit:</span>
                 <span>${opt.available ? 'Live Options IV &amp; Promoter Pledge Active (Cached)' : 'Using Local 14D ATR &amp; Solvency Gatekeeper (0 Calls)'}</span>
             </div>
-            <button id="btnOnDemandAudit" onclick="triggerTapetideDeepAudit('${data.symbol}')" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(16, 185, 129, 0.2)); border: 1px solid var(--accent-indigo); color: var(--text-primary); border-radius: 4px; font-size: 10.5px; font-weight: 600; padding: 4px 10px; cursor: pointer; display: flex; align-items: center; gap: 5px;">
-                <span>⚡</span> ${opt.available ? 'Re-Audit (Cached)' : 'Run Live Tapetide Audit (1 Call)'}
+            <button id="btnOnDemandAudit" onclick="triggerTapetideDeepAudit('${data.symbol}')" style="background: var(--bg-elevated); border: 1px solid var(--border-mid); color: var(--text-primary); border-radius: 4px; font-size: 12px; font-weight: 600; padding: 4px 10px; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+                ${opt.available ? 'Re-audit (cached)' : 'Run Tapetide audit (1 call)'}
             </button>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
             <div>
-                <div style="font-size: 11.5px; font-weight: 700; color: var(--text-primary); text-transform: uppercase; margin-bottom: 8px; font-family: var(--font-display);">
+                <div style="font-size: 11.5px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; font-family: var(--font-display);">
                     Price Drivers &amp; Liquidity Flow
                 </div>
                 <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 12px;">
@@ -2234,7 +2480,7 @@ function renderIntelligenceContent(data) {
                     </div>
                 </div>
 
-                <div style="font-size: 11.5px; font-weight: 700; color: var(--text-primary); text-transform: uppercase; margin-bottom: 8px; font-family: var(--font-display);">
+                <div style="font-size: 11.5px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; font-family: var(--font-display);">
                     Quantitative Factor Drivers
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 6px;">
@@ -2253,10 +2499,10 @@ function renderIntelligenceContent(data) {
 
             <div>
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                    <span style="font-size: 11.5px; font-weight: 700; color: var(--text-primary); text-transform: uppercase; font-family: var(--font-display);">
+                    <span style="font-size: 11.5px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display);">
                         Live Verified News Headlines
                     </span>
-                    <span style="font-size: 10px; font-family: var(--font-mono); color: var(--accent-mint); background: var(--accent-mint-bg); padding: 2px 6px; border-radius: 3px; border: 1px solid var(--accent-mint-border);">
+                    <span style="font-size: 12px; font-family: var(--font-mono); color: var(--accent-mint); background: var(--accent-mint-bg); padding: 2px 6px; border-radius: 3px; border: 1px solid var(--accent-mint-border);">
                         Multi-Provider RSS
                     </span>
                 </div>
@@ -2307,7 +2553,7 @@ async function triggerTapetideDeepAudit(symbol) {
         alert("Deep Audit Notice: " + err.message);
         if (btn) {
             btn.disabled = false;
-            btn.innerHTML = `<span>⚡</span> Retry Audit`;
+            btn.textContent = "Retry audit";
         }
     }
 }
@@ -2428,213 +2674,25 @@ async function generateReportManual() {
     }
 }
 
-// --------------------------------------------------------------------------
-// Three.js 3D Dot Matrix Globe & Thinking Orb Loader Engine
-// Features: Fibonacci Particle Sphere, Glowing India Coordinates, Orbit Rings
-// --------------------------------------------------------------------------
-let globeScene = null;
-let globeCamera = null;
-let globeRenderer = null;
-let globePoints = null;
-let orbitRing1 = null;
-let orbitRing2 = null;
-let indiaBeacon = null;
-let globeAnimId = null;
 let globeStepInterval = null;
-
-function initThreeGlobeLoader() {
-    const canvas = document.getElementById("globeCanvas");
-    if (!canvas || !window.THREE) {
-        return;
-    }
-
-    if (globeRenderer) return; // Already initialized
-
-    const width = 340;
-    const height = 340;
-
-    // 1. Scene & Camera
-    globeScene = new THREE.Scene();
-    globeCamera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    globeCamera.position.z = 290;
-
-    // 2. WebGL Renderer
-    globeRenderer = new THREE.WebGLRenderer({
-        canvas: canvas,
-        alpha: true,
-        antialias: true
-    });
-    globeRenderer.setSize(width, height);
-    globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-    // 3. Fibonacci Spherical Dot Grid
-    const particleCount = 3400;
-    const radius = 105;
-    const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount * 3);
-
-    // Color definitions
-    // India Glowing Saffron/Gold & Luminous Emerald
-    const colorSaffron = new THREE.Color("#FF9F1C");
-    const colorEmerald = new THREE.Color("#00E676");
-    const colorIndiaWhite = new THREE.Color("#FFFFFF");
-    // World Electric Indigo / Cyan
-    const colorCyan = new THREE.Color("#38BDF8");
-    const colorIndigo = new THREE.Color("#4F46E5");
-    const colorDim = new THREE.Color("#1E293B");
-
-    for (let i = 0; i < particleCount; i++) {
-        // Golden ratio sphere distribution
-        const phi = Math.acos(1 - 2 * (i + 0.5) / particleCount);
-        const theta = Math.PI * (1 + Math.sqrt(5)) * (i + 0.5);
-
-        const x = radius * Math.sin(phi) * Math.cos(theta);
-        const y = radius * Math.cos(phi);
-        const z = radius * Math.sin(phi) * Math.sin(theta);
-
-        positions[i * 3] = x;
-        positions[i * 3 + 1] = y;
-        positions[i * 3 + 2] = z;
-
-        // Convert coordinates to Geographic Latitude & Longitude (approx)
-        const lat = 90 - (phi * 180 / Math.PI);
-        let lon = (theta * 180 / Math.PI) % 360;
-        if (lon > 180) lon -= 360;
-
-        // INDIA BOUNDING BOX: Lat 7° to 37° N, Lon 68° to 97° E
-        const isIndia = (lat >= 7 && lat <= 37 && lon >= 68 && lon <= 97);
-
-        let chosenColor;
-        if (isIndia) {
-            // Tricolor gradient: North (Saffron), Center (White/Gold), South (Emerald)
-            if (lat > 23) {
-                chosenColor = colorSaffron;
-            } else if (lat > 15) {
-                chosenColor = colorIndiaWhite;
-            } else {
-                chosenColor = colorEmerald;
-            }
-        } else {
-            // World dots in cyan and deep indigo
-            const rand = Math.random();
-            if (rand > 0.82) chosenColor = colorCyan;
-            else if (rand > 0.35) chosenColor = colorIndigo;
-            else chosenColor = colorDim;
-        }
-
-        colors[i * 3] = chosenColor.r;
-        colors[i * 3 + 1] = chosenColor.g;
-        colors[i * 3 + 2] = chosenColor.b;
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    // Custom circular sprite texture for sharp, glowing dots
-    const dotCanvas = document.createElement('canvas');
-    dotCanvas.width = 32;
-    dotCanvas.height = 32;
-    const dotCtx = dotCanvas.getContext('2d');
-    const grad = dotCtx.createRadialGradient(16, 16, 0, 16, 16, 16);
-    grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.4, 'rgba(255,255,255,0.8)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    dotCtx.fillStyle = grad;
-    dotCtx.beginPath();
-    dotCtx.arc(16, 16, 16, 0, Math.PI * 2);
-    dotCtx.fill();
-    const dotTexture = new THREE.CanvasTexture(dotCanvas);
-
-    const material = new THREE.PointsMaterial({
-        size: 4.2,
-        vertexColors: true,
-        map: dotTexture,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-    });
-
-    globePoints = new THREE.Points(geometry, material);
-    globeScene.add(globePoints);
-
-    // 4. "Thinking Orb" Orbital Rings (Atomic AI Reasoning Rings)
-    const ringGeo1 = new THREE.RingGeometry(125, 126, 64);
-    const ringMat1 = new THREE.MeshBasicMaterial({
-        color: 0x6366f1,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.35
-    });
-    orbitRing1 = new THREE.Mesh(ringGeo1, ringMat1);
-    orbitRing1.rotation.x = Math.PI / 3;
-    orbitRing1.rotation.y = Math.PI / 6;
-    globeScene.add(orbitRing1);
-
-    const ringGeo2 = new THREE.RingGeometry(140, 141, 64);
-    const ringMat2 = new THREE.MeshBasicMaterial({
-        color: 0x00e676,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.25
-    });
-    orbitRing2 = new THREE.Mesh(ringGeo2, ringMat2);
-    orbitRing2.rotation.x = -Math.PI / 4;
-    orbitRing2.rotation.y = Math.PI / 3;
-    globeScene.add(orbitRing2);
-
-    // 5. Pulsing Indian Center Coordinate Beacon (Lat 21N, Lon 78E)
-    const phiB = (90 - 21) * Math.PI / 180;
-    const thetaB = (78) * Math.PI / 180;
-    const bx = radius * Math.sin(phiB) * Math.cos(thetaB);
-    const by = radius * Math.cos(phiB);
-    const bz = radius * Math.sin(phiB) * Math.sin(thetaB);
-
-    const beaconGeo = new THREE.SphereGeometry(2.5, 16, 16);
-    const beaconMat = new THREE.MeshBasicMaterial({
-        color: 0xff9f1c,
-        transparent: true,
-        opacity: 0.95
-    });
-    indiaBeacon = new THREE.Mesh(beaconGeo, beaconMat);
-    indiaBeacon.position.set(bx, by, bz);
-    globePoints.add(indiaBeacon);
-
-    // Initial globe tilt to face Indian Subcontinent toward user
-    globePoints.rotation.x = 0.35;
-    globePoints.rotation.y = -1.2;
-
-    animateGlobe();
-}
-
-function animateGlobe() {
-    globeAnimId = requestAnimationFrame(animateGlobe);
-
-    if (globePoints) {
-        globePoints.rotation.y += 0.007;
-    }
-    if (orbitRing1) {
-        orbitRing1.rotation.z += 0.012;
-    }
-    if (orbitRing2) {
-        orbitRing2.rotation.z -= 0.009;
-    }
-    if (indiaBeacon) {
-        const scale = 1 + 0.3 * Math.sin(Date.now() * 0.006);
-        indiaBeacon.scale.set(scale, scale, scale);
-    }
-
-    if (globeRenderer && globeScene && globeCamera) {
-        globeRenderer.render(globeScene, globeCamera);
-    }
-}
 
 // --------------------------------------------------------------------------
 // Minimalist Scanner Loader & Toast System
 // --------------------------------------------------------------------------
 let scanProgressPollInterval = null;
 
-function showScanLoader(title, subtitle) {
+function orbHtml(state, size = 64, extraClass = "") {
+    const cls = size === 20 ? "ps-orb ps-orb-inline" : "ps-orb";
+    return `<span class="${cls} ${extraClass}" data-orb="${state}" data-orb-size="${size}" aria-hidden="true"></span>`;
+}
+
+function setLoaderOrb(state) {
+    const orb = document.getElementById("loaderOrb");
+    if (orb) orb.setAttribute("data-orb", state);
+}
+
+function showScanLoader(title, subtitle, orbState = "working") {
+    setLoaderOrb(orbState);
     const overlay = document.getElementById("globeLoaderOverlay");
     const titleEl = document.getElementById("globeLoaderTitle");
     const subEl = document.getElementById("globeLoaderSubtitle");
@@ -2647,13 +2705,10 @@ function showScanLoader(title, subtitle) {
     if (title && titleEl) titleEl.textContent = title;
     if (subtitle && subEl) subEl.textContent = subtitle;
 
-    // Ensure 3D Dot Matrix Globe is initialized and rendering
-    initThreeGlobeLoader();
-
     if (barEl) barEl.style.width = "4%";
     if (percentEl) percentEl.textContent = "4%";
-    if (countPillEl) countPillEl.textContent = "Screening all 58 NSE Benchmark Equities...";
-    if (stepEl) stepEl.textContent = "INITIALIZING SCREENING PIPELINE...";
+    if (countPillEl) countPillEl.textContent = "Preparing the NSE + BSE universe";
+    if (stepEl) stepEl.textContent = "Syncing exchange price files";
 
     overlay.classList.add("active");
 
@@ -2671,16 +2726,16 @@ function showScanLoader(title, subtitle) {
                 if (percentEl) percentEl.textContent = `${pct}%`;
 
                 if (countPillEl) {
-                    const totalUniverse = prog.target_count || 58;
+                    const totalUniverse = prog.target_count || 0;
                     if (prog.evaluated_count > 0) {
-                        countPillEl.textContent = `${prog.evaluated_count} of ${totalUniverse} Equities Evaluated (${prog.qualified_count} Qualified)`;
+                        countPillEl.textContent = `${prog.evaluated_count.toLocaleString("en-IN")} of ${totalUniverse.toLocaleString("en-IN")} evaluated, ${prog.qualified_count} qualified`;
                     } else {
-                        countPillEl.textContent = `Evaluating all ${totalUniverse} NSE Leaders...`;
+                        countPillEl.textContent = `Preparing ${totalUniverse ? totalUniverse.toLocaleString("en-IN") + " " : ""}stocks`;
                     }
                 }
 
                 if (stepEl && prog.stage_text) {
-                    stepEl.textContent = prog.stage_text.toUpperCase();
+                    stepEl.textContent = prog.stage_text.replace(/^[\u2713\u2714]\s*/, "");
                 }
             }
         } catch (e) {
@@ -2701,8 +2756,8 @@ function hideScanLoader() {
 
     if (barEl) barEl.style.width = "100%";
     if (percentEl) percentEl.textContent = "100%";
-    if (countPillEl) countPillEl.textContent = "✓ Screening Complete";
-    if (stepEl) stepEl.textContent = "SCREENING RUN COMPLETED SUCCESSFULLY";
+    if (countPillEl) countPillEl.textContent = "Screening complete";
+    if (stepEl) stepEl.textContent = "";
 
     setTimeout(() => {
         if (overlay) overlay.classList.remove("active");
@@ -2716,10 +2771,11 @@ function showToast(message, type = "info") {
 
     const toast = document.createElement("div");
     toast.className = `toast ${type}`;
-    toast.innerHTML = `
-        <span>${type === 'success' ? '✓' : (type === 'error' ? '✕' : 'ℹ')}</span>
-        <span>${message}</span>
-    `;
+    const icon = document.createElement("span");
+    icon.textContent = type === "success" ? "✓" : (type === "error" ? "✕" : "ℹ");
+    const text = document.createElement("span");
+    text.textContent = message;
+    toast.append(icon, text);
 
     container.appendChild(toast);
     setTimeout(() => {
@@ -2754,7 +2810,7 @@ function applyTheme(isLight) {
     }
 
     const topBtn = document.getElementById("topThemeToggleBtn");
-    if (topBtn) topBtn.title = isLight ? "Switch to Dark Studio Mode" : "Switch to Daylight Paper Mode";
+    if (topBtn) topBtn.title = isLight ? "Switch to dark theme" : "Switch to light theme";
 
     const sideContainer = document.getElementById("sidebarThemeIconContainer");
     if (sideContainer) {
@@ -2762,10 +2818,7 @@ function applyTheme(isLight) {
     }
 
     const sideLabel = document.getElementById("sidebarThemeLabel");
-    if (sideLabel) sideLabel.textContent = isLight ? "Daylight Paper" : "Dark Studio";
-
-    const sidePill = document.getElementById("sidebarThemePill");
-    if (sidePill) sidePill.textContent = isLight ? "LIGHT" : "DARK";
+    if (sideLabel) sideLabel.textContent = isLight ? "Light theme" : "Dark theme";
 
     localStorage.setItem("predictastock_theme", isLight ? "light" : "dark");
 
@@ -2781,7 +2834,7 @@ function applyTheme(isLight) {
 function toggleThemeManual() {
     const isCurrentlyLight = document.body.classList.contains("light-theme");
     applyTheme(!isCurrentlyLight);
-    showToast(`Switched to ${!isCurrentlyLight ? 'Daylight Paper' : 'Dark Studio'} Mode`, "info");
+    showToast(`Switched to ${!isCurrentlyLight ? 'light' : 'dark'} theme`, "info");
 }
 
 window.loadPaperTradingScorecard = loadPaperTradingScorecard;
@@ -2882,172 +2935,118 @@ window.openIntegrationsModal = openIntegrationsModal;
 window.closeIntegrationsModal = closeIntegrationsModal;
 window.saveTapetideToken = saveTapetideToken;
 
+
 // -------------------------------------------------------------
-// PAST DATA PREDICTION TESTER & HISTORICAL REALITY CHECK
+// WEEKLY LIVE-ENGINE BACKTEST
 // -------------------------------------------------------------
-let pastTesterDatesLoaded = false;
-let pastTesterCurrentData = null;
-let pastTesterMode = "present"; // "present" or "recorded"
-let pastTesterDatesData = null;
+let weeklyBacktestWindow = "6mo";
+let weeklyBacktestPoll = null;
+let weeklyBacktestLoaded = false;
 
-// Expose early on window to guarantee global scope availability
-window.initPastDataTester = initPastDataTester;
-window.switchPastTesterMode = switchPastTesterMode;
-window._switchPastTesterMode = switchPastTesterMode;
-window.selectAndRunPastTestDate = selectAndRunPastTestDate;
-window.selectAndRunRecordedPastDate = selectAndRunRecordedPastDate;
-window.onPastTesterRecordedSelect = onPastTesterRecordedSelect;
-window.runSelectedHistoricalTest = runSelectedHistoricalTest;
-window.runRecordedHistoricalRun = runRecordedHistoricalRun;
-window.executePastDataTest = executePastDataTest;
-window.showPastTesterGlobeLoader = showPastTesterGlobeLoader;
-window.hidePastTesterGlobeLoader = hidePastTesterGlobeLoader;
+function isoLocalDate(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
 
-function switchPastTesterMode(mode) {
-    pastTesterMode = mode;
-    const tabPresent = document.getElementById("tabModePresentEngine");
-    const tabRecorded = document.getElementById("tabModeRecordedPast");
-    const descText = document.getElementById("pastTesterModeDescText");
-    const controlsPresent = document.getElementById("pastTesterPresentControls");
-    const controlsRecorded = document.getElementById("pastTesterRecordedControls");
+function lastCompletedSaturday(today = new Date()) {
+    const day = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const pythonWeekday = (day.getDay() + 6) % 7;
+    const daysSinceSaturday = (pythonWeekday - 5 + 7) % 7;
+    day.setDate(day.getDate() - daysSinceSaturday);
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    if (day >= todayStart) day.setDate(day.getDate() - 7);
+    return day;
+}
 
-    if (mode === "present") {
-        if (tabPresent) {
-            tabPresent.style.background = "#38bdf8";
-            tabPresent.style.color = "#020617";
-            tabPresent.style.fontWeight = "600";
-        }
-        if (tabRecorded) {
-            tabRecorded.style.background = "transparent";
-            tabRecorded.style.color = "var(--text-muted)";
-            tabRecorded.style.fontWeight = "500";
-        }
-        if (controlsPresent) controlsPresent.style.display = "flex";
-        if (controlsRecorded) controlsRecorded.style.display = "none";
-        if (descText) descText.textContent = "Evaluating historical dates with today's new multi-factor calibrated engine";
-        runSelectedHistoricalTest();
+function weeklyRangeFor(windowKey) {
+    const end = lastCompletedSaturday();
+    const start = new Date(end);
+    if (windowKey === "1y") start.setDate(start.getDate() - 365);
+    else start.setDate(start.getDate() - 183);
+    return { start: isoLocalDate(start), end: isoLocalDate(end) };
+}
+
+function markWeeklyPreset(windowKey) {
+    document.querySelectorAll("#wbPresetRow [data-window]").forEach((btn) => {
+        const selected = btn.getAttribute("data-window") === windowKey;
+        btn.classList.toggle("btn-primary", selected);
+        btn.classList.toggle("btn-secondary", !selected);
+    });
+}
+
+function showWeeklySelection() {
+    const status = document.getElementById("weeklyBacktestStatus");
+    const start = document.getElementById("weeklyStartDate")?.value;
+    const end = document.getElementById("weeklyEndDate")?.value;
+    if (!status || !start || !end) return;
+    const label = weeklyBacktestWindow === "1y"
+        ? "Last 1 year"
+        : weeklyBacktestWindow === "6mo"
+            ? "Last 6 months"
+            : "Custom dates";
+    status.textContent = `${label} selected: ${start} to ${end}. Press Run weekly backtest.`;
+}
+
+function setWeeklyBacktestWindow(windowKey) {
+    weeklyBacktestWindow = windowKey === "1y" || windowKey === "custom" ? windowKey : "6mo";
+    markWeeklyPreset(weeklyBacktestWindow);
+    if (weeklyBacktestWindow !== "custom") {
+        const range = weeklyRangeFor(weeklyBacktestWindow);
+        const startEl = document.getElementById("weeklyStartDate");
+        const endEl = document.getElementById("weeklyEndDate");
+        if (startEl) startEl.value = range.start;
+        if (endEl) endEl.value = range.end;
+    }
+    showWeeklySelection();
+}
+
+function onWeeklyDateEdited() {
+    weeklyBacktestWindow = "custom";
+    markWeeklyPreset("custom");
+    showWeeklySelection();
+}
+
+function initWeeklyBacktest() {
+    const startEl = document.getElementById("weeklyStartDate");
+    const endEl = document.getElementById("weeklyEndDate");
+    const today = isoLocalDate(new Date());
+    if (startEl) startEl.max = today;
+    if (endEl) endEl.max = today;
+    if (!weeklyBacktestLoaded) {
+        weeklyBacktestLoaded = true;
+        document.querySelectorAll("#wbPresetRow [data-window]").forEach((btn) => {
+            btn.addEventListener("click", () => setWeeklyBacktestWindow(btn.getAttribute("data-window")));
+        });
+        if (startEl) startEl.addEventListener("change", onWeeklyDateEdited);
+        if (endEl) endEl.addEventListener("change", onWeeklyDateEdited);
+        const runBtn = document.getElementById("btnRunWeeklyBacktest");
+        if (runBtn) runBtn.addEventListener("click", () => runWeeklyEngineBacktest());
+        setWeeklyBacktestWindow("6mo");
     } else {
-        if (tabRecorded) {
-            tabRecorded.style.background = "#38bdf8";
-            tabRecorded.style.color = "#020617";
-            tabRecorded.style.fontWeight = "600";
-        }
-        if (tabPresent) {
-            tabPresent.style.background = "transparent";
-            tabPresent.style.color = "var(--text-muted)";
-            tabPresent.style.fontWeight = "500";
-        }
-        if (controlsPresent) controlsPresent.style.display = "none";
-        if (controlsRecorded) controlsRecorded.style.display = "flex";
-        if (descText) descText.textContent = "Inspecting sealed historical predictions actually archived in the database";
-        runRecordedHistoricalRun();
+        showWeeklySelection();
     }
+    loadSavedWeeklyBacktest().then(() => resumeWeeklyBacktestLoader());
 }
 
-async function initPastDataTester() {
-    if (pastTesterDatesLoaded) return;
+let weeklyOrbOpen = false;
+
+async function loadSavedWeeklyBacktest() {
     try {
-        const res = await fetch("/api/historical-test/dates");
-        if (!res.ok) throw new Error("Could not load historical test dates");
+        const res = await fetch(`${API_BASE}/api/backtest/weekly/latest?t=${Date.now()}`, { cache: "no-store" });
+        if (!res.ok) return;
         const data = await res.json();
-        pastTesterDatesData = data;
-        
-        // 1. Render quick preset buttons for Present Engine
-        const presetContainer = document.getElementById("pastTesterPresetBtns");
-        if (presetContainer && data.presets) {
-            presetContainer.innerHTML = data.presets.map(p => `
-                <button class="btn btn-secondary btn-sm" onclick="selectAndRunPastTestDate('${p.date}')" style="font-size: 11px; padding: 4px 10px; cursor: pointer;">
-                    ${p.label}
-                </button>
-            `).join("");
-        }
-
-        // 2. Render recorded past dates pills for Archived Runs mode
-        const pillsContainer = document.getElementById("pastTesterRecordedPills");
-        if (pillsContainer && data.recorded_dates) {
-            pillsContainer.innerHTML = data.recorded_dates.map(r => `
-                <button class="btn btn-secondary btn-sm" onclick="selectAndRunRecordedPastDate('${r.date}')" style="font-size: 11px; padding: 4px 10px; cursor: pointer;">
-                    ${r.formatted}
-                </button>
-            `).join("");
-        }
-
-        // 3. Render recorded past runs dropdown
-        const dropdown = document.getElementById("pastTesterRecordedDropdown");
-        if (dropdown && data.recorded_dates) {
-            dropdown.innerHTML = `<option value="">Select sealed past run...</option>` +
-                data.recorded_dates.map(r => `
-                    <option value="${r.date}">${r.formatted} (${r.pick_count} archived setups)</option>
-                `).join("");
-            if (data.recorded_dates.length > 0) {
-                dropdown.value = data.recorded_dates[0].date;
-            }
-        }
-
-        // 4. Custom date picker constraints for Present Engine mode
-        const customDateInput = document.getElementById("pastTesterCustomDate");
-        if (customDateInput && data.max_test_date) {
-            customDateInput.max = data.max_test_date;
-            if (data.presets && data.presets.length > 0) {
-                customDateInput.value = data.presets[0].date;
-            }
-        }
-
-        pastTesterDatesLoaded = true;
-
-        // Auto-run the default preset (1 Week Ago) with Present Engine
-        if (data.presets && data.presets.length > 0) {
-            selectAndRunPastTestDate(data.presets[0].date);
-        }
+        if (data.report) renderWeeklyBacktest(data.report);
     } catch (err) {
-        console.error("Error loading historical test dates:", err);
+        console.error("Weekly backtest load failed:", err);
     }
 }
 
-function selectAndRunPastTestDate(dateStr) {
-    const customDateInput = document.getElementById("pastTesterCustomDate");
-    if (customDateInput) customDateInput.value = dateStr;
-    executePastDataTest(dateStr, true);
-}
-
-function selectAndRunRecordedPastDate(dateStr) {
-    const dropdown = document.getElementById("pastTesterRecordedDropdown");
-    if (dropdown) dropdown.value = dateStr;
-    executePastDataTest(dateStr, false);
-}
-
-function onPastTesterRecordedSelect(dateStr) {
-    if (!dateStr) return;
-    executePastDataTest(dateStr, false);
-}
-
-function runSelectedHistoricalTest() {
-    const customDateInput = document.getElementById("pastTesterCustomDate");
-    const targetDate = customDateInput ? customDateInput.value : null;
-    if (!targetDate) {
-        if (typeof showToast === "function") showToast("Please select a historical past date", "warning");
-        return;
-    }
-    executePastDataTest(targetDate, true);
-}
-
-function runRecordedHistoricalRun() {
-    const dropdown = document.getElementById("pastTesterRecordedDropdown");
-    let targetDate = dropdown ? dropdown.value : null;
-    if (!targetDate && pastTesterDatesData && pastTesterDatesData.recorded_dates && pastTesterDatesData.recorded_dates.length > 0) {
-        targetDate = pastTesterDatesData.recorded_dates[0].date;
-        if (dropdown) dropdown.value = targetDate;
-    }
-    if (!targetDate) {
-        if (typeof showToast === "function") showToast("No recorded historical run selected", "warning");
-        return;
-    }
-    executePastDataTest(targetDate, false);
-}
-
-let pastTesterLoaderInterval = null;
-
-function showPastTesterGlobeLoader(targetDate, isPresentEngine = true) {
+function showWeeklyOrbLoader(detail) {
+    weeklyOrbOpen = true;
+    setLoaderOrb("working");
     const overlay = document.getElementById("globeLoaderOverlay");
     const titleEl = document.getElementById("globeLoaderTitle");
     const subEl = document.getElementById("globeLoaderSubtitle");
@@ -3055,323 +3054,270 @@ function showPastTesterGlobeLoader(targetDate, isPresentEngine = true) {
     const stepEl = document.getElementById("globeStepText");
     const percentEl = document.getElementById("globePercentVal");
     const countPillEl = document.getElementById("globeCountPill");
-
-    if (!overlay) return;
-
-    if (typeof initThreeGlobeLoader === "function") {
-        initThreeGlobeLoader();
+    if (titleEl) titleEl.textContent = "Weekly backtest";
+    if (subEl) subEl.textContent = detail || "Scoring each Monday's list of 5 through Saturday.";
+    if (barEl) barEl.style.width = "4%";
+    if (percentEl) percentEl.textContent = "4%";
+    if (countPillEl) countPillEl.textContent = "Preparing the Monday predictions";
+    if (stepEl) stepEl.textContent = "Loading price history";
+    if (overlay) overlay.classList.add("active");
+    ["wbWinRate", "wbLossRate", "wbHits", "wbLosses", "wbAvgUp", "wbAvgDown"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = "...";
+    });
+    const banner = document.getElementById("weeklyPhaseBanner");
+    if (banner) banner.textContent = "Scoring every Monday with the present engine. The previous score is cleared until this run finishes.";
+    const tbody = document.getElementById("weeklyBacktestTableBody");
+    if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="8" class="ps-orb-block">${orbHtml("working")} Scoring each Monday's 5 predictions...</td></tr>`;
     }
-
-    const modeTitle = isPresentEngine 
-        ? "HISTORICAL BACKTEST // CALIBRATED ENGINE" 
-        : "ARCHIVE AUDIT // SEALED HISTORICAL DATABASE";
-    const modeSubtitle = isPresentEngine
-        ? `Replaying NSE benchmark equities as-of ${targetDate} with today's calibrated multi-factor engine...`
-        : `Retrieving sealed historical recommendations and evaluating actual 5-day market path for ${targetDate}...`;
-
-    if (titleEl) titleEl.textContent = modeTitle;
-    if (subEl) subEl.textContent = modeSubtitle;
-
-    if (barEl) barEl.style.width = "10%";
-    if (percentEl) percentEl.textContent = "10%";
-    if (countPillEl) countPillEl.textContent = `Point-in-Time Session: ${targetDate}`;
-    if (stepEl) stepEl.textContent = "INITIALIZING POINT-IN-TIME MARKET DATA...";
-
-    overlay.classList.add("active");
-
-    clearInterval(pastTesterLoaderInterval);
-    if (typeof scanProgressPollInterval !== "undefined" && scanProgressPollInterval) {
-        clearInterval(scanProgressPollInterval);
-    }
-
-    const stages = [
-        { pct: 24, pill: `Reconstructing Daily Bars for ${targetDate}...`, step: "FETCHING POINT-IN-TIME PRICE & VOLUME SERIES..." },
-        { pct: 48, pill: isPresentEngine ? "Applying Quantitative Factor Pipeline..." : "Reading Immutable Database Archive...", step: isPresentEngine ? "COMPUTING REGIME, MOMENTUM & VOLATILITY FILTERS..." : "EXTRACTING SEALED PREDICTIONS SNAPSHOT..." },
-        { pct: 72, pill: "Replaying Subsequent 5-Day Market Realization...", step: "CALCULATING FORWARD PRICE PATH & PEAK HIGH MARKS..." },
-        { pct: 88, pill: "Benchmarking Excess Return vs Nifty 50...", step: "AUDITING TARGET HIT RATES & ALPHA SPREAD..." },
-        { pct: 95, pill: "Synthesizing Final Verification Scorecard...", step: "FINALIZING BACKTEST AUDIT METRICS..." }
-    ];
-
-    let currentStage = 0;
-    pastTesterLoaderInterval = setInterval(() => {
-        if (currentStage < stages.length) {
-            const st = stages[currentStage];
-            if (barEl) barEl.style.width = `${st.pct}%`;
-            if (percentEl) percentEl.textContent = `${st.pct}%`;
-            if (countPillEl) countPillEl.textContent = st.pill;
-            if (stepEl) stepEl.textContent = st.step;
-            currentStage++;
-        }
-    }, 400);
 }
 
-function hidePastTesterGlobeLoader() {
+function paintWeeklyOrb(progress) {
+    const barEl = document.getElementById("globeProgressBar");
+    const stepEl = document.getElementById("globeStepText");
+    const percentEl = document.getElementById("globePercentVal");
+    const countPillEl = document.getElementById("globeCountPill");
+    const pct = Math.max(4, Math.min(99, Math.round(progress.percent || 4)));
+    if (barEl) barEl.style.width = `${pct}%`;
+    if (percentEl) percentEl.textContent = `${pct}%`;
+    const done = Number(progress.weeks_done || 0);
+    const total = Number(progress.weeks_total || 0);
+    if (countPillEl) {
+        countPillEl.textContent = total
+            ? `Week ${Math.min(total, done + 1)} of ${total}`
+            : "Scoring Mondays";
+    }
+    if (stepEl) stepEl.textContent = progress.stage || "Scoring the weekly list of 5";
+}
+
+function hideWeeklyOrbLoader() {
     const overlay = document.getElementById("globeLoaderOverlay");
     const barEl = document.getElementById("globeProgressBar");
     const percentEl = document.getElementById("globePercentVal");
     const countPillEl = document.getElementById("globeCountPill");
     const stepEl = document.getElementById("globeStepText");
-
-    clearInterval(pastTesterLoaderInterval);
-
     if (barEl) barEl.style.width = "100%";
     if (percentEl) percentEl.textContent = "100%";
-    if (countPillEl) countPillEl.textContent = "✓ Historical Audit Complete";
-    if (stepEl) stepEl.textContent = "BACKTEST EVALUATION COMPLETED SUCCESSFULLY";
-
+    if (countPillEl) countPillEl.textContent = "Weekly score ready";
+    if (stepEl) stepEl.textContent = "";
+    weeklyOrbOpen = false;
     setTimeout(() => {
         if (overlay) overlay.classList.remove("active");
         if (barEl) barEl.style.width = "0%";
-    }, 350);
+    }, 320);
 }
 
-function setPastTesterLoading(isLoading, targetDate, isPresentEngine = true) {
-    const btnPresent = document.getElementById("btnRunPastTester");
-    const btnRecorded = document.getElementById("btnRunRecordedRun");
-    const textPresent = document.getElementById("btnRunPastTesterText");
-    const textRecorded = document.getElementById("btnRunRecordedRunText");
-    const statusPresent = document.getElementById("pastTesterRunStatus");
-    const statusRecorded = document.getElementById("pastTesterRecordedRunStatus");
-
-    const modeName = isPresentEngine ? "Present Calibrated Model" : "Archived Database Record";
-
-    if (isLoading) {
-        if (btnPresent) btnPresent.disabled = true;
-        if (btnRecorded) btnRecorded.disabled = true;
-        if (textPresent) textPresent.innerHTML = `<span class="loading-spinner-sm" style="margin-right: 5px;"></span> Evaluating...`;
-        if (textRecorded) textRecorded.innerHTML = `<span class="loading-spinner-sm" style="margin-right: 5px;"></span> Loading...`;
-
-        const loadingHtml = `<span class="badge pulsing-badge" style="background: rgba(234, 179, 8, 0.2); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.4);"><span class="loading-spinner-sm" style="border-color: rgba(234,179,8,0.3); border-top-color: #eab308; margin-right: 5px;"></span> EVALUATING</span> Analyzing market bars for <strong>${targetDate}</strong> (${modeName})...`;
-        if (statusPresent) statusPresent.innerHTML = loadingHtml;
-        if (statusRecorded) statusRecorded.innerHTML = loadingHtml;
-
-        // Keep existing table rows intact with slight opacity while 3D globe overlay runs
-        const tbody = document.getElementById("pastTesterTableBody");
-        if (tbody) tbody.style.opacity = "0.45";
-
-        // Set KPI placeholders
-        ["ptKpiHitRate", "ptKpiWinRate", "ptKpiAvgPred", "ptKpiAvgPeak", "ptKpiNifty", "ptKpiAlpha"].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.innerHTML = `<span style="opacity: 0.4; font-size: 16px;">...</span>`;
-        });
-    } else {
-        if (btnPresent) btnPresent.disabled = false;
-        if (btnRecorded) btnRecorded.disabled = false;
-        if (textPresent) textPresent.textContent = "Run Present Model Test";
-        if (textRecorded) textRecorded.textContent = "Load Sealed Past Run";
-        const tbody = document.getElementById("pastTesterTableBody");
-        if (tbody) tbody.style.opacity = "1";
-    }
-}
-
-async function executePastDataTest(targetDate, forceRecalculate = true) {
-    if (!targetDate) return;
-    showPastTesterGlobeLoader(targetDate, forceRecalculate);
-    setPastTesterLoading(true, targetDate, forceRecalculate);
-
+async function resumeWeeklyBacktestLoader() {
     try {
-        const res = await fetch("/api/historical-test/run", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target_date: targetDate, force_recalculate: forceRecalculate })
-        });
-        if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.detail || "Historical test execution failed");
-        }
+        const res = await fetch(`${API_BASE}/api/backtest/weekly/progress`);
+        if (!res.ok) return;
         const data = await res.json();
-        const report = data.report;
-        pastTesterCurrentData = report;
-
-        if (report.error && (!report.results || report.results.length === 0)) {
-            const tbody = document.getElementById("pastTesterTableBody");
-            if (tbody) {
-                tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: #f59e0b; padding: 40px 16px;">
-                    <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 6px;">Notice</div>
-                    <div style="font-size: 12px; max-width: 500px; margin: 0 auto;">${report.error}</div>
-                </td></tr>`;
-            }
-            const statusHtml = `<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3);">NO RUN RECORDED</span> ${report.error}`;
-            const s1 = document.getElementById("pastTesterRunStatus");
-            const s2 = document.getElementById("pastTesterRecordedRunStatus");
-            if (s1) s1.innerHTML = statusHtml;
-            if (s2) s2.innerHTML = statusHtml;
-            return;
+        if (data.status !== "running") return;
+        showWeeklyOrbLoader("A weekly backtest is already running.");
+        paintWeeklyOrb(data);
+        const button = document.getElementById("btnRunWeeklyBacktest");
+        if (button) {
+            button.disabled = true;
+            button.textContent = "Running...";
         }
-
-        // Render KPI metrics
-        renderPastTesterKPIs(report);
-
-        // Render table
-        renderPastTesterTable(report);
-
-        const badgeColor = report.target_hit_rate_pct >= 60 ? "#22c55e" : (report.target_hit_rate_pct > 0 ? "#38bdf8" : "#f59e0b");
-        const statusHtml = `<span class="badge" style="background: rgba(56, 189, 248, 0.15); color: ${badgeColor}; border: 1px solid ${badgeColor}; font-weight: 700;">AUDIT COMPLETE</span> [${report.run_mode_label || (forceRecalculate ? "Present Calibrated Engine" : "Sealed Database Run")}] Date: <strong>${report.formatted_date || targetDate}</strong> • ${report.total_picks} Setups • Hit Rate: <strong>${report.target_hit_rate_pct}%</strong>`;
-        
-        const s1 = document.getElementById("pastTesterRunStatus");
-        const s2 = document.getElementById("pastTesterRecordedRunStatus");
-        if (s1) s1.innerHTML = statusHtml;
-        if (s2) s2.innerHTML = statusHtml;
+        if (weeklyBacktestPoll) clearInterval(weeklyBacktestPoll);
+        weeklyBacktestPoll = setInterval(pollWeeklyBacktest, 1500);
     } catch (err) {
-        console.error("Historical test error:", err);
-        const errHtml = `<span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">ERROR</span> ${err.message}`;
-        const s1 = document.getElementById("pastTesterRunStatus");
-        const s2 = document.getElementById("pastTesterRecordedRunStatus");
-        if (s1) s1.innerHTML = errHtml;
-        if (s2) s2.innerHTML = errHtml;
-
-        const tbody = document.getElementById("pastTesterTableBody");
-        if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--color-bearish); padding: 36px 16px;">
-                Error evaluating past data for ${targetDate}: ${err.message}
-            </td></tr>`;
-        }
-    } finally {
-        setPastTesterLoading(false, targetDate, forceRecalculate);
-        hidePastTesterGlobeLoader();
+        console.error("Weekly loader resume failed:", err);
     }
 }
 
-function renderPastTesterKPIs(rep) {
-    const elHitRate = document.getElementById("ptKpiHitRate");
-    const elHitCount = document.getElementById("ptKpiHitCount");
-    const elWinRate = document.getElementById("ptKpiWinRate");
-    const elWinCount = document.getElementById("ptKpiWinCount");
-    const elAvgPred = document.getElementById("ptKpiAvgPred");
-    const elAvgPeak = document.getElementById("ptKpiAvgPeak");
-    const elAvgEnd = document.getElementById("ptKpiAvgEnd");
-    const elNifty = document.getElementById("ptKpiNifty");
-    const elAlpha = document.getElementById("ptKpiAlpha");
-    const elRegime = document.getElementById("ptKpiRegime");
-    const elAvgProb = document.getElementById("ptKpiAvgProb");
+function renderWeeklyBacktest(report) {
+    const score = report.score || {};
+    const gate = report.phase_gate || {};
+    const win = document.getElementById("wbWinRate");
+    const lossRate = document.getElementById("wbLossRate");
+    const hits = document.getElementById("wbHits");
+    const losses = document.getElementById("wbLosses");
+    const hitShare = document.getElementById("wbHitShare");
+    const lossShare = document.getElementById("wbLossShare");
+    const avgUp = document.getElementById("wbAvgUp");
+    const avgDown = document.getElementById("wbAvgDown");
+    const totalUp = document.getElementById("wbTotalUp");
+    const totalDown = document.getElementById("wbTotalDown");
+    const banner = document.getElementById("weeklyPhaseBanner");
 
-    if (elHitRate) {
-        elHitRate.textContent = `${rep.target_hit_rate_pct}%`;
-        elHitRate.style.color = rep.target_hit_rate_pct >= 60 ? "var(--color-bullish)" : (rep.target_hit_rate_pct > 0 ? "#38bdf8" : "var(--color-bearish)");
+    const predicted = Number(score.predicted ?? score.trades ?? 0);
+    const hitCount = Number(score.hits ?? 0);
+    const lossCount = Number(score.losses ?? 0);
+    const lossRatePct = score.loss_rate_pct ?? (predicted ? (lossCount / predicted) * 100 : 0);
+    if (win) {
+        win.textContent = `${Number(score.win_rate_pct ?? 0).toFixed(1)}%`;
+        win.style.color = (score.win_rate_pct || 0) >= 50 ? "var(--gain)" : "var(--loss)";
     }
-    if (elHitCount) {
-        elHitCount.textContent = `${rep.targets_hit_count} of ${rep.total_picks} hit target at peak`;
+    if (lossRate) lossRate.textContent = `${Number(lossRatePct).toFixed(1)}%`;
+    if (hits) hits.textContent = String(hitCount);
+    if (losses) losses.textContent = String(lossCount);
+    if (hitShare) hitShare.textContent = predicted ? `${hitCount} hits out of ${predicted} predictions` : "Hits out of the weekly 5";
+    if (lossShare) lossShare.textContent = predicted ? `${lossCount} losses out of ${predicted} predictions` : "Losses out of the weekly 5";
+    if (avgUp) {
+        avgUp.textContent = `${(score.avg_up_pct || 0) >= 0 ? "+" : ""}${Number(score.avg_up_pct || 0).toFixed(2)}%`;
+        avgUp.style.color = "var(--gain)";
     }
-    if (elWinRate) {
-        elWinRate.textContent = `${rep.win_rate_pct}%`;
-        elWinRate.style.color = rep.win_rate_pct >= 50 ? "var(--color-bullish)" : "var(--color-bearish)";
+    if (avgDown) {
+        avgDown.textContent = `${Number(score.avg_down_pct || 0).toFixed(2)}%`;
+        avgDown.style.color = "var(--loss)";
     }
-    if (elWinCount) {
-        elWinCount.textContent = `${rep.profitable_count} of ${rep.total_picks} profitable at Day 5`;
+    if (totalUp) totalUp.textContent = `Total up ${(score.total_up_pct || 0) >= 0 ? "+" : ""}${Number(score.total_up_pct || 0).toFixed(2)}%`;
+    if (totalDown) totalDown.textContent = `Total down ${Number(score.total_down_pct || 0).toFixed(2)}%`;
+    const excessEl = document.getElementById("wbExcess");
+    const baseEl = document.getElementById("wbBaseRate");
+    const expectancyEl = document.getElementById("wbExpectancy");
+    const factorEl = document.getElementById("wbProfitFactor");
+    const portfolioEl = document.getElementById("wbPortfolio");
+    const drawdownEl = document.getElementById("wbDrawdown");
+    const portfolio = score.portfolio || {};
+    if (excessEl) {
+        const excess = score.excess_hit_rate_pct;
+        excessEl.textContent = excess == null ? "--" : `${excess >= 0 ? "+" : ""}${Number(excess).toFixed(1)} pts`;
+        excessEl.style.color = Number(excess) > 0 ? "var(--gain)" : "var(--loss)";
     }
-    if (elAvgPred) elAvgPred.textContent = `Pred: +${rep.avg_predicted_return_pct}%`;
-    if (elAvgPeak) {
-        elAvgPeak.textContent = `Peak: ${rep.avg_actual_peak_return_pct >= 0 ? '+' : ''}${rep.avg_actual_peak_return_pct}%`;
-        elAvgPeak.style.color = rep.avg_actual_peak_return_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
+    if (baseEl) baseEl.textContent = score.base_rate_pct == null ? "Universe base rate --" : `Universe base rate ${Number(score.base_rate_pct).toFixed(1)}%`;
+    if (expectancyEl) {
+        const expectancy = Number(score.expectancy_pct || 0);
+        expectancyEl.textContent = `${expectancy >= 0 ? "+" : ""}${expectancy.toFixed(2)}%`;
+        expectancyEl.style.color = expectancy >= 0 ? "var(--gain)" : "var(--loss)";
     }
-    if (elAvgEnd) elAvgEnd.textContent = `Avg Day-5 Close: ${rep.avg_actual_end_return_pct >= 0 ? '+' : ''}${rep.avg_actual_end_return_pct}%`;
-    if (elNifty) {
-        elNifty.textContent = `${rep.nifty_benchmark_return_pct >= 0 ? '+' : ''}${rep.nifty_benchmark_return_pct}%`;
-        elNifty.style.color = rep.nifty_benchmark_return_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
+    if (factorEl) factorEl.textContent = `Profit factor ${Number(score.profit_factor || 0).toFixed(2)}`;
+    if (portfolioEl) {
+        const total = Number(portfolio.total_return_pct || 0);
+        portfolioEl.textContent = portfolio.total_return_pct == null ? "--" : `${total >= 0 ? "+" : ""}${total.toFixed(2)}%`;
+        portfolioEl.style.color = total >= 0 ? "var(--gain)" : "var(--loss)";
     }
-    if (elAlpha) {
-        elAlpha.textContent = `${rep.alpha_vs_nifty_pct >= 0 ? '+' : ''}${rep.alpha_vs_nifty_pct}%`;
-        elAlpha.style.color = rep.alpha_vs_nifty_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
+    if (drawdownEl) drawdownEl.textContent = portfolio.max_drawdown_pct == null ? "Max drawdown --" : `Max drawdown ${Number(portfolio.max_drawdown_pct).toFixed(1)}%`;
+    if (banner) {
+        const ready = !!gate.ready_for_next_phase;
+        banner.textContent = gate.reason || "Weekly score saved.";
+        banner.style.borderColor = ready ? "var(--gain)" : "var(--warn)";
+        banner.style.color = ready ? "var(--gain)" : "var(--text-primary)";
     }
-    if (elRegime) {
-        elRegime.textContent = rep.market_regime || "EVALUATED";
-        elRegime.style.color = (rep.market_regime && rep.market_regime.includes("CORRECTION")) ? "#f59e0b" : "#22c55e";
-    }
-    if (elAvgProb) {
-        elAvgProb.textContent = `Avg Calibrated Win Prob: ${rep.avg_win_probability_pct || 65}%`;
-    }
-}
-
-function renderPastTesterTable(rep) {
-    const tbody = document.getElementById("pastTesterTableBody");
+    const tbody = document.getElementById("weeklyBacktestTableBody");
     if (!tbody) return;
-
-    if (!rep.results || rep.results.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 32px;">No historical prediction records found for this date.</td></tr>`;
+    const weeks = report.weeks || [];
+    if (!weeks.length) {
+        tbody.innerHTML = `<tr><td colspan="11" style="text-align:center; color: var(--text-muted); padding: 32px;">No completed weeks in this range.</td></tr>`;
         return;
     }
-
-    tbody.innerHTML = rep.results.map((r) => {
-        const peakColor = r.actual_peak_return_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
-        const endColor = r.actual_end_return_pct >= 0 ? "var(--color-bullish)" : "var(--color-bearish)";
-        
-        let badgeStyle = "background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);";
-        if (r.target_hit) {
-            badgeStyle = "background: rgba(34, 197, 94, 0.18); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.4); font-weight: 700;";
-        } else if (r.status_badge === "PROFITABLE") {
-            badgeStyle = "background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-weight: 600;";
-        } else if (r.status_badge === "STOPPED_OUT") {
-            badgeStyle = "background: rgba(249, 115, 22, 0.15); color: #f97316; border: 1px solid rgba(249, 115, 22, 0.3);";
-        }
-
-        // Mini day-by-day path chips
-        const dayChips = (r.day_by_day || []).map(d => {
-            const dColor = d.change_pct >= 0 ? "#22c55e" : "#ef4444";
-            return `<span style="display: inline-block; padding: 2px 5px; font-size: 10px; font-family: var(--font-mono); border-radius: 3px; background: rgba(15,23,42,0.6); color: ${dColor}; margin: 1px;" title="${d.date}: Close Rs.${d.close} (${d.change_pct >= 0 ? '+' : ''}${d.change_pct}%)">D${d.day_number}:${d.change_pct >= 0 ? '+' : ''}${d.change_pct}%</span>`;
-        }).join("");
-
-        const winProbVal = r.win_probability_pct ? Math.round(r.win_probability_pct) : 65;
-        const setupQ = r.setup_quality || (winProbVal >= 70 ? 'A+' : (winProbVal >= 60 ? 'A' : 'B'));
-        const rrVal = r.reward_to_risk ? r.reward_to_risk.toFixed(1) : '1.5';
-
-        return `
-            <tr style="border-bottom: 1px solid var(--border-subtle);">
-                <td style="padding: 12px 14px;">
-                    <div style="font-weight: 700; color: var(--text-primary);">${r.symbol}</div>
-                    <div style="font-size: 11px; color: var(--text-muted);">${r.name || r.sector}</div>
-                </td>
-                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); color: var(--text-secondary);">
-                    ₹${r.reference_price.toLocaleString('en-IN', {minimumFractionDigits: 2})}
-                </td>
-                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); font-weight: 600; color: #38bdf8;">
-                    ₹${r.predicted_target_price.toLocaleString('en-IN', {minimumFractionDigits: 2})}
-                </td>
-                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); font-weight: 600; color: var(--color-bullish);">
-                    +${r.predicted_return_pct.toFixed(2)}%
-                </td>
-                <td style="padding: 12px; text-align: center; font-family: var(--font-mono);">
-                    <span class="badge" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 11px;">
-                        ${winProbVal}% (${setupQ})
-                    </span>
-                    <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">R/R: ${rrVal}x</div>
-                </td>
-                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); background: rgba(56, 189, 248, 0.03);">
-                    <div style="font-weight: 700; color: ${peakColor};">₹${r.actual_peak_price.toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                    <div style="font-size: 10.5px; color: ${peakColor};">(${r.actual_peak_return_pct >= 0 ? '+' : ''}${r.actual_peak_return_pct.toFixed(2)}%)</div>
-                </td>
-                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); background: rgba(56, 189, 248, 0.03);">
-                    <div style="font-weight: 700; color: ${endColor};">₹${r.actual_end_price.toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                    <div style="font-size: 10.5px; color: ${endColor};">(${r.actual_end_return_pct >= 0 ? '+' : ''}${r.actual_end_return_pct.toFixed(2)}%)</div>
-                </td>
-                <td style="padding: 12px; text-align: center;">
-                    <span class="badge" style="${badgeStyle}">${r.badge_label}</span>
-                </td>
-                <td style="padding: 12px; text-align: right; font-family: var(--font-mono); font-size: 11.5px; color: ${r.variance_pct >= 0 ? 'var(--color-bullish)' : 'var(--color-bearish)'};">
-                    ${r.variance_pct >= 0 ? '+' : ''}${r.variance_pct.toFixed(2)}%
-                </td>
-                <td style="padding: 12px 14px; text-align: center;">
-                    <div style="display: flex; flex-wrap: wrap; justify-content: center; max-width: 200px;">
-                        ${dayChips || '<span style="color: var(--text-muted); font-size: 11px;">Pending</span>'}
-                    </div>
-                </td>
-            </tr>
-        `;
+    const pct = (value) => `${Number(value || 0).toFixed(1)}%`;
+    const signed = (value) => value == null || value === "" ? "--" : `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(2)}%`;
+    tbody.innerHTML = weeks.map((row) => {
+        const called = Number(row.predicted ?? row.picks ?? 0);
+        const weekHits = Number(row.hits || 0);
+        const weekLosses = Number(row.losses || 0);
+        const weekWin = row.win_rate_pct ?? (called ? (weekHits / called) * 100 : 0);
+        const weekLoss = row.loss_rate_pct ?? (called ? (weekLosses / called) * 100 : 0);
+        return `<tr>
+            <td style="font-family: var(--font-mono);">${row.week_start || row.signal_date} → ${row.week_end}</td>
+            <td class="num" style="font-weight:700;">${called}</td>
+            <td class="num" style="color: var(--gain); font-weight:700;">${weekHits}</td>
+            <td class="num" style="color: var(--loss); font-weight:700;">${weekLosses}</td>
+            <td class="num" style="color: var(--gain);">${pct(weekWin)}</td>
+            <td class="num" style="color: var(--loss);">${pct(weekLoss)}</td>
+            <td class="num" style="color: var(--gain);">${Number(row.avg_up_pct || 0) ? "+" : ""}${Number(row.avg_up_pct || 0).toFixed(2)}%</td>
+            <td class="num" style="color: var(--loss);">${Number(row.avg_down_pct || 0).toFixed(2)}%</td>
+            <td class="num">${row.base_rate_pct == null ? "--" : pct(row.base_rate_pct)}</td>
+            <td class="num">${signed(row.nifty_return_pct)}</td>
+            <td class="num" style="color: ${Number(row.excess_hit_rate_pct) >= 0 ? "var(--gain)" : "var(--loss)"};">${row.excess_hit_rate_pct == null ? "--" : `${Number(row.excess_hit_rate_pct) >= 0 ? "+" : ""}${Number(row.excess_hit_rate_pct).toFixed(1)}`}</td>
+        </tr>`;
     }).join("");
 }
 
-window.initPastDataTester = initPastDataTester;
-window.switchPastTesterMode = switchPastTesterMode;
-window._switchPastTesterMode = switchPastTesterMode;
-window.selectAndRunPastTestDate = selectAndRunPastTestDate;
-window.selectAndRunRecordedPastDate = selectAndRunRecordedPastDate;
-window.onPastTesterRecordedSelect = onPastTesterRecordedSelect;
-window.runSelectedHistoricalTest = runSelectedHistoricalTest;
-window.runRecordedHistoricalRun = runRecordedHistoricalRun;
-window.executePastDataTest = executePastDataTest;
-window.showPastTesterGlobeLoader = showPastTesterGlobeLoader;
-window.hidePastTesterGlobeLoader = hidePastTesterGlobeLoader;
+async function runWeeklyEngineBacktest() {
+    const status = document.getElementById("weeklyBacktestStatus");
+    const button = document.getElementById("btnRunWeeklyBacktest");
+    const startDate = document.getElementById("weeklyStartDate")?.value || "";
+    const endDate = document.getElementById("weeklyEndDate")?.value || "";
+    if (!startDate || !endDate) {
+        if (typeof showToast === "function") showToast("Choose a start date and an end date", "warning");
+        if (status) status.textContent = "Pick a start date and an end date first.";
+        return;
+    }
+    if (startDate > endDate) {
+        if (typeof showToast === "function") showToast("The start date is after the end date", "warning");
+        if (status) status.textContent = "The start date has to be on or before the end date.";
+        return;
+    }
+    const payload = { window: "custom", start_date: startDate, end_date: endDate };
+    if (button) {
+        button.disabled = true;
+        button.textContent = "Running...";
+    }
+    showWeeklyOrbLoader(`${startDate} to ${endDate}. Each Monday runs the full present-engine scan, so this takes as long as a live analysis once per week.`);
+    if (status) status.textContent = `Running ${startDate} to ${endDate}.`;
+    try {
+        const res = await fetch(`${API_BASE}/api/backtest/weekly/run`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            hideWeeklyOrbLoader();
+            throw new Error(data.detail || "Weekly backtest failed to start");
+        }
+        if (weeklyBacktestPoll) clearInterval(weeklyBacktestPoll);
+        weeklyBacktestPoll = setInterval(pollWeeklyBacktest, 1500);
+        pollWeeklyBacktest();
+    } catch (err) {
+        if (button) {
+            button.disabled = false;
+            button.textContent = "Run weekly backtest";
+        }
+        if (status) status.textContent = err.message;
+        hideWeeklyOrbLoader();
+        if (typeof showToast === "function") showToast(err.message, "error");
+    }
+}
 
+async function pollWeeklyBacktest() {
+    const status = document.getElementById("weeklyBacktestStatus");
+    const button = document.getElementById("btnRunWeeklyBacktest");
+    try {
+        const res = await fetch(`${API_BASE}/api/backtest/weekly/progress?t=${Date.now()}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.status === "running") paintWeeklyOrb(data);
+        if (status && data.stage) status.textContent = data.stage;
+        if (data.status === "completed") {
+            clearInterval(weeklyBacktestPoll);
+            weeklyBacktestPoll = null;
+            if (button) {
+                button.disabled = false;
+                button.textContent = "Run weekly backtest";
+            }
+            hideWeeklyOrbLoader();
+            await loadSavedWeeklyBacktest();
+            showWeeklySelection();
+        } else if (data.status === "error") {
+            clearInterval(weeklyBacktestPoll);
+            weeklyBacktestPoll = null;
+            if (button) {
+                button.disabled = false;
+                button.textContent = "Run weekly backtest";
+            }
+            hideWeeklyOrbLoader();
+            if (status) status.textContent = data.error || data.stage || "Weekly backtest failed";
+        } else if (data.status !== "running") {
+            clearInterval(weeklyBacktestPoll);
+            weeklyBacktestPoll = null;
+            if (button) {
+                button.disabled = false;
+                button.textContent = "Run weekly backtest";
+            }
+            hideWeeklyOrbLoader();
+            await loadSavedWeeklyBacktest();
+        }
+    } catch (err) {
+        console.error("Weekly backtest poll failed:", err);
+    }
+}
 
-
-
-
+window.setWeeklyBacktestWindow = setWeeklyBacktestWindow;
+window.initWeeklyBacktest = initWeeklyBacktest;
+window.runWeeklyEngineBacktest = runWeeklyEngineBacktest;

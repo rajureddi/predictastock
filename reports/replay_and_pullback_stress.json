@@ -1,0 +1,165 @@
+{
+  "replay": {
+    "rows": 107,
+    "formula_note": "full = 45/25/20/10 with news inside the score. desk = no-news renormalized score plus the finalist news add, which is what the save path writes.",
+    "median_stored_minus_full": 0.3,
+    "median_stored_minus_desk": -5.0,
+    "stored_80_median_gap_full": 6.5,
+    "stored_80_median_gap_desk": -0.5,
+    "before_29_oct": {
+      "n": 74,
+      "median_gap_full": 0.0,
+      "median_gap_desk": -6.6
+    },
+    "on_or_after_29_oct": {
+      "n": 33,
+      "median_gap_full": 7.1,
+      "median_gap_desk": 0.0
+    },
+    "by_stored_score": {
+      "below_70": {
+        "n": 16,
+        "wins": 7,
+        "win_rate_pct": 43.8
+      },
+      "band_70_80": {
+        "n": 54,
+        "wins": 24,
+        "win_rate_pct": 44.4
+      },
+      "band_80_plus": {
+        "n": 37,
+        "wins": 4,
+        "win_rate_pct": 10.8
+      }
+    },
+    "by_full_formula": {
+      "below_70": {
+        "n": 22,
+        "wins": 5,
+        "win_rate_pct": 22.7
+      },
+      "band_70_80": {
+        "n": 64,
+        "wins": 25,
+        "win_rate_pct": 39.1
+      },
+      "band_80_plus": {
+        "n": 21,
+        "wins": 5,
+        "win_rate_pct": 23.8
+      }
+    },
+    "by_desk_save_path": {
+      "below_70": {
+        "n": 10,
+        "wins": 1,
+        "win_rate_pct": 10.0
+      },
+      "band_70_80": {
+        "n": 28,
+        "wins": 10,
+        "win_rate_pct": 35.7
+      },
+      "band_80_plus": {
+        "n": 69,
+        "wins": 24,
+        "win_rate_pct": 34.8
+      }
+    }
+  },
+  "pullback_quiet": {
+    "all": {
+      "trades": 99,
+      "win_rate_pct": 40.4,
+      "expectancy_pct": 0.115,
+      "profit_factor": 1.09,
+      "weeks": 43,
+      "losing_weeks": 24,
+      "max_drawdown_pct": 14.51,
+      "longest_losing_week_streak": 8,
+      "longest_losing_trade_streak": 17,
+      "ending_equity": 0.9628
+    },
+    "first_half_to_15_may": {
+      "trades": 54,
+      "win_rate_pct": 33.3,
+      "expectancy_pct": -0.323,
+      "profit_factor": 0.75
+    },
+    "second_half_from_16_may": {
+      "trades": 45,
+      "win_rate_pct": 48.9,
+      "expectancy_pct": 0.64,
+      "profit_factor": 1.53
+    },
+    "quarters": {
+      "2025-12_to_2026-02": {
+        "trades": 31,
+        "win_rate_pct": 22.6,
+        "expectancy_pct": -1.072,
+        "profit_factor": 0.29
+      },
+      "2026-03_to_2026-05": {
+        "trades": 26,
+        "win_rate_pct": 50.0,
+        "expectancy_pct": 1.008,
+        "profit_factor": 2.01
+      },
+      "2026-06_to_2026-08": {
+        "trades": 30,
+        "win_rate_pct": 56.7,
+        "expectancy_pct": 0.797,
+        "profit_factor": 1.65
+      },
+      "2026-09_to_2026-10": {
+        "trades": 12,
+        "win_rate_pct": 25.0,
+        "expectancy_pct": -0.462,
+        "profit_factor": 0.64
+      }
+    },
+    "cmf_above_0_15": {
+      "trades": 23,
+      "win_rate_pct": 43.5,
+      "expectancy_pct": 0.345,
+      "profit_factor": 1.24
+    },
+    "cmf_at_most_0_15": {
+      "trades": 76,
+      "win_rate_pct": 39.5,
+      "expectancy_pct": 0.045,
+      "profit_factor": 1.04
+    },
+    "cmf_above_0": {
+      "trades": 49,
+      "win_rate_pct": 49.0,
+      "expectancy_pct": 0.42,
+      "profit_factor": 1.31
+    },
+    "cmf_at_most_0": {
+      "trades": 50,
+      "win_rate_pct": 32.0,
+      "expectancy_pct": -0.185,
+      "profit_factor": 0.84
+    },
+    "delivery_surge_at_least_1_4": {
+      "trades": 54,
+      "win_rate_pct": 35.2,
+      "expectancy_pct": -0.131,
+      "profit_factor": 0.9
+    },
+    "delivery_surge_below_1_4": {
+      "trades": 45,
+      "win_rate_pct": 46.7,
+      "expectancy_pct": 0.409,
+      "profit_factor": 1.34
+    },
+    "delivery_bonus": {
+      "trades": 54,
+      "win_rate_pct": 35.2,
+      "expectancy_pct": -0.131,
+      "profit_factor": 0.9
+    }
+  }
+}

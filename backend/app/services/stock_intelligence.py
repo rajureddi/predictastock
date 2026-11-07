@@ -21,18 +21,25 @@ from app.services.news_sentiment import fetch_stock_news_rss, analyze_sentiment,
 from app.services.tapetide_service import get_stock_enrichment
 
 
-def get_stock_deep_intelligence(symbol: str) -> Dict[str, Any]:
+def get_stock_deep_intelligence(
+    symbol: str,
+    yahoo_ticker: str = None,
+    company_name: str = None,
+    exchange: str = "NSE",
+) -> Dict[str, Any]:
     """
     Assembles deep intelligence for an individual stock.
     Returns explicit error state if price feed is offline or unverified.
     """
     clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
     meta = get_symbol_info(clean_sym)
-    company_name = meta.get("name", clean_sym)
+    if not company_name or company_name.strip().upper() == clean_sym:
+        company_name = meta.get("name", clean_sym)
     sector = meta.get("sector", "Diversified")
+    venue = "BSE" if str(exchange).upper() == "BSE" else "NSE"
 
     # 1. Price History & Quote Validation
-    quote = get_latest_quote(clean_sym)
+    quote = get_latest_quote(clean_sym, yahoo_ticker=yahoo_ticker)
     if not is_quote_valid(quote):
         return {
             "symbol": clean_sym,
@@ -48,7 +55,7 @@ def get_stock_deep_intelligence(symbol: str) -> Dict[str, Any]:
     volume = quote.get("volume", 0)
 
     # 2. Technical Indicators
-    df = get_stock_history(clean_sym, period="3mo")
+    df = get_stock_history(clean_sym, period="3mo", yahoo_ticker=yahoo_ticker)
     if not df.empty and len(df) >= 10:
         tech = compute_all_indicators(df)
         highs = df['High']
@@ -78,7 +85,12 @@ def get_stock_deep_intelligence(symbol: str) -> Dict[str, Any]:
     vol_ratio = round(volume / max(1.0, avg_vol_20), 2)
 
     # 3. Verified News Headlines (Google News RSS)
-    raw_news = fetch_stock_news_rss(clean_sym, max_items=6)
+    raw_news = fetch_stock_news_rss(
+        clean_sym,
+        max_items=6,
+        exchange=venue,
+        company_name=company_name,
+    )
     annotated_news: List[Dict[str, Any]] = []
 
     for item in raw_news:

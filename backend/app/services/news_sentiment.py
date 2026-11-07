@@ -37,10 +37,27 @@ NEGATIVE_KEYWORDS = [
 ]
 
 
+def headline_is_known_on(pub_date: Optional[str], as_of: date) -> bool:
+    """A headline counts only when its publication date parses and is on or before the signal.
+
+    An unreadable pubDate is dropped. Keeping it would attach a live headline to an old Monday.
+    """
+    if not pub_date or as_of is None:
+        return False
+    try:
+        published = email.utils.parsedate_to_datetime(pub_date)
+        published_day = published.date()
+    except (TypeError, ValueError, OverflowError, AttributeError):
+        return False
+    return published_day <= as_of
+
+
 def fetch_stock_news_rss(
     symbol: str, 
     max_items: int = 5, 
-    as_of_date: Optional[str] = None
+    as_of_date: Optional[str] = None,
+    exchange: str = "NSE",
+    company_name: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Scrape real-time or point-in-time financial news for an NSE stock across multiple free providers:
@@ -59,14 +76,20 @@ def fetch_stock_news_rss(
     clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
     
     # Resolve company name for richer news extraction
-    company_name = clean_sym
-    try:
-        from app.data.nifty_constituents import get_symbol_info
-        info = get_symbol_info(clean_sym)
-        if info and info.get("name"):
-            company_name = info["name"]
-    except Exception:
-        pass
+    venue = "BSE" if str(exchange).upper() == "BSE" else "NSE"
+    suffix = ".BO" if venue == "BSE" else ".NS"
+    if not company_name or company_name.strip().upper() == clean_sym:
+        company_name = clean_sym
+        try:
+            from app.data.nifty_constituents import get_symbol_info
+            info = get_symbol_info(clean_sym)
+            if info and info.get("name"):
+                company_name = info["name"]
+        except Exception:
+            pass
+    else:
+        company_name = company_name.strip()
+    news_label = company_name if company_name.upper() != clean_sym else clean_sym
 
     as_of_dt: Optional[date] = None
     as_of_str: Optional[str] = None
@@ -110,7 +133,7 @@ def fetch_stock_news_rss(
     # Provider 1: Yahoo Finance Real-Time RSS (Available for live queries)
     if not as_of_dt:
         try:
-            y_url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={clean_sym}.NS&region=US&lang=en-US"
+            y_url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={clean_sym}{suffix}&region=US&lang=en-US"
             req = urllib.request.Request(y_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
             with urllib.request.urlopen(req, timeout=4) as response:
                 root = ET.fromstring(response.read())
@@ -139,10 +162,10 @@ def fetch_stock_news_rss(
     if len(news_items) < max_items:
         if as_of_dt:
             start_dt = as_of_dt - timedelta(days=5)
-            query = urllib.parse.quote(f"NSE {clean_sym} stock after:{start_dt.isoformat()} before:{as_of_dt.isoformat()}")
+            query = urllib.parse.quote(f"{venue} {news_label} stock after:{start_dt.isoformat()} before:{as_of_dt.isoformat()}")
             url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
         else:
-            query = urllib.parse.quote(f"NSE {clean_sym} stock")
+            query = urllib.parse.quote(f"{venue} {news_label} stock")
             url = f"https://news.google.com/rss/search?q={query}+when:7d&hl=en-IN&gl=IN&ceid=IN:en"
 
         try:
@@ -158,13 +181,8 @@ def fetch_stock_news_rss(
                     source_elem = item.find('source')
                     source = source_elem.text if source_elem is not None else "Google News India"
                     
-                    if as_of_dt and pub_date:
-                        try:
-                            pub_dt = email.utils.parsedate_to_datetime(pub_date).date()
-                            if pub_dt > as_of_dt:
-                                continue
-                        except Exception:
-                            pass
+                    if as_of_dt and not headline_is_known_on(pub_date, as_of_dt):
+                        continue
 
                     clean_title = re.sub(r' - [^-]+$', '', title).strip()
                     if clean_title and clean_title not in seen_titles:
@@ -203,13 +221,8 @@ def fetch_stock_news_rss(
                     source_elem = item.find('source')
                     source = source_elem.text if source_elem is not None else "Indian Financial Media"
 
-                    if as_of_dt and pub_date:
-                        try:
-                            pub_dt = email.utils.parsedate_to_datetime(pub_date).date()
-                            if pub_dt > as_of_dt:
-                                continue
-                        except Exception:
-                            pass
+                    if as_of_dt and not headline_is_known_on(pub_date, as_of_dt):
+                        continue
 
                     clean_title = re.sub(r' - [^-]+$', '', title).strip()
                     if clean_title and clean_title not in seen_titles:

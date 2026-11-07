@@ -1,0 +1,553 @@
+{
+  "generated_at": "2026-11-03T01:02:39",
+  "start_date": "2025-12-01",
+  "end_date": "2026-10-31",
+  "weeks": {
+    "2025-12-01": {
+      "base_rate_pct": 24.1,
+      "eq_weight_return_pct": -2.248,
+      "nifty_return_pct": 0.04,
+      "names": 1048
+    },
+    "2025-12-08": {
+      "base_rate_pct": 76.9,
+      "eq_weight_return_pct": 2.164,
+      "nifty_return_pct": 0.33,
+      "names": 1013
+    },
+    "2025-12-15": {
+      "base_rate_pct": 35.4,
+      "eq_weight_return_pct": -0.66,
+      "nifty_return_pct": -0.23,
+      "names": 995
+    },
+    "2025-12-22": {
+      "base_rate_pct": 26.8,
+      "eq_weight_return_pct": -1.261,
+      "nifty_return_pct": -0.88,
+      "names": 973
+    },
+    "2025-12-29": {
+      "base_rate_pct": 72.7,
+      "eq_weight_return_pct": 1.889,
+      "nifty_return_pct": 1.49,
+      "names": 979
+    },
+    "2026-01-05": {
+      "base_rate_pct": 11.8,
+      "eq_weight_return_pct": -4.083,
+      "nifty_return_pct": -2.16,
+      "names": 988
+    },
+    "2026-01-12": {
+      "base_rate_pct": 28.6,
+      "eq_weight_return_pct": -1.435,
+      "nifty_return_pct": -0.79,
+      "names": 984
+    },
+    "2026-01-19": {
+      "base_rate_pct": 13.0,
+      "eq_weight_return_pct": -4.479,
+      "nifty_return_pct": -2.1,
+      "names": 1014
+    },
+    "2026-01-27": {
+      "base_rate_pct": 53.5,
+      "eq_weight_return_pct": 0.245,
+      "nifty_return_pct": -0.35,
+      "names": 1013
+    },
+    "2026-02-02": {
+      "base_rate_pct": 35.5,
+      "eq_weight_return_pct": -1.339,
+      "nifty_return_pct": 2.41,
+      "names": 1024
+    },
+    "2026-02-09": {
+      "base_rate_pct": 23.0,
+      "eq_weight_return_pct": -2.563,
+      "nifty_return_pct": -1.53,
+      "names": 1056
+    },
+    "2026-02-17": {
+      "base_rate_pct": 29.2,
+      "eq_weight_return_pct": -1.382,
+      "nifty_return_pct": -0.05,
+      "names": 1080
+    },
+    "2026-02-23": {
+      "base_rate_pct": 35.4,
+      "eq_weight_return_pct": -1.249,
+      "nifty_return_pct": -2.08,
+      "names": 1083
+    },
+    "2026-03-02": {
+      "base_rate_pct": 42.9,
+      "eq_weight_return_pct": -0.31,
+      "nifty_return_pct": -2.43,
+      "names": 1059
+    },
+    "2026-03-09": {
+      "base_rate_pct": 20.7,
+      "eq_weight_return_pct": -2.917,
+      "nifty_return_pct": -3.65,
+      "names": 1038
+    },
+    "2026-03-16": {
+      "base_rate_pct": 16.8,
+      "eq_weight_return_pct": -4.167,
+      "nifty_return_pct": -3.83,
+      "names": 1033
+    },
+    "2026-03-23": {
+      "base_rate_pct": 20.9,
+      "eq_weight_return_pct": -3.325,
+      "nifty_return_pct": -0.81,
+      "names": 1020
+    },
+    "2026-03-30": {
+      "base_rate_pct": 73.1,
+      "eq_weight_return_pct": 3.112,
+      "nifty_return_pct": 3.55,
+      "names": 1077
+    },
+    "2026-04-06": {
+      "base_rate_pct": 91.7,
+      "eq_weight_return_pct": 6.528,
+      "nifty_return_pct": 4.71,
+      "names": 1077
+    },
+    "2026-04-13": {
+      "base_rate_pct": 71.7,
+      "eq_weight_return_pct": 2.502,
+      "nifty_return_pct": 2.19,
+      "names": 1099
+    },
+    "2026-04-20": {
+      "base_rate_pct": 36.1,
+      "eq_weight_return_pct": -0.487,
+      "nifty_return_pct": -1.92,
+      "names": 1120
+    },
+    "2026-04-27": {
+      "base_rate_pct": 45.1,
+      "eq_weight_return_pct": 0.051,
+      "nifty_return_pct": 0.11,
+      "names": 1128
+    },
+    "2026-05-04": {
+      "base_rate_pct": 68.2,
+      "eq_weight_return_pct": 2.549,
+      "nifty_return_pct": 0.24,
+      "names": 1116
+    },
+    "2026-05-11": {
+      "base_rate_pct": 20.5,
+      "eq_weight_return_pct": -2.916,
+      "nifty_return_pct": -0.72,
+      "names": 1161
+    },
+    "2026-05-18": {
+      "base_rate_pct": 61.0,
+      "eq_weight_return_pct": 1.565,
+      "nifty_return_pct": 0.29,
+      "names": 1150
+    },
+    "2026-05-25": {
+      "base_rate_pct": 29.0,
+      "eq_weight_return_pct": -1.716,
+      "nifty_return_pct": -2.7,
+      "names": 1167
+    },
+    "2026-06-01": {
+      "base_rate_pct": 59.9,
+      "eq_weight_return_pct": 1.583,
+      "nifty_return_pct": -0.07,
+      "names": 1177
+    },
+    "2026-06-08": {
+      "base_rate_pct": 60.3,
+      "eq_weight_return_pct": 1.21,
+      "nifty_return_pct": 2.16,
+      "names": 1160
+    },
+    "2026-06-15": {
+      "base_rate_pct": 58.6,
+      "eq_weight_return_pct": 1.467,
+      "nifty_return_pct": 0.67,
+      "names": 1159
+    },
+    "2026-06-22": {
+      "base_rate_pct": 23.8,
+      "eq_weight_return_pct": -2.426,
+      "nifty_return_pct": -0.65,
+      "names": 1177
+    },
+    "2026-06-29": {
+      "base_rate_pct": 64.2,
+      "eq_weight_return_pct": 1.603,
+      "nifty_return_pct": 1.36,
+      "names": 1164
+    },
+    "2026-07-06": {
+      "base_rate_pct": 39.2,
+      "eq_weight_return_pct": -0.215,
+      "nifty_return_pct": -0.91,
+      "names": 1198
+    },
+    "2026-07-13": {
+      "base_rate_pct": 28.9,
+      "eq_weight_return_pct": -1.424,
+      "nifty_return_pct": 0.51,
+      "names": 1224
+    },
+    "2026-07-20": {
+      "base_rate_pct": 23.8,
+      "eq_weight_return_pct": -1.828,
+      "nifty_return_pct": -1.94,
+      "names": 1201
+    },
+    "2026-07-27": {
+      "base_rate_pct": 42.1,
+      "eq_weight_return_pct": -0.388,
+      "nifty_return_pct": 1.62,
+      "names": 1173
+    },
+    "2026-08-03": {
+      "base_rate_pct": 43.2,
+      "eq_weight_return_pct": 0.007,
+      "nifty_return_pct": -0.82,
+      "names": 1146
+    },
+    "2026-08-10": {
+      "base_rate_pct": 32.6,
+      "eq_weight_return_pct": -1.101,
+      "nifty_return_pct": -0.89,
+      "names": 1181
+    },
+    "2026-08-17": {
+      "base_rate_pct": 44.3,
+      "eq_weight_return_pct": 0.324,
+      "nifty_return_pct": -0.15,
+      "names": 1208
+    },
+    "2026-08-24": {
+      "base_rate_pct": 41.2,
+      "eq_weight_return_pct": -0.046,
+      "nifty_return_pct": -0.18,
+      "names": 1223
+    },
+    "2026-08-31": {
+      "base_rate_pct": 41.4,
+      "eq_weight_return_pct": -0.11,
+      "nifty_return_pct": -0.76,
+      "names": 1215
+    },
+    "2026-09-07": {
+      "base_rate_pct": 31.1,
+      "eq_weight_return_pct": -1.096,
+      "nifty_return_pct": -1.6,
+      "names": 1195
+    },
+    "2026-09-15": {
+      "base_rate_pct": 69.2,
+      "eq_weight_return_pct": 2.279,
+      "nifty_return_pct": 1.28,
+      "names": 1180
+    },
+    "2026-09-21": {
+      "base_rate_pct": 33.6,
+      "eq_weight_return_pct": -0.595,
+      "nifty_return_pct": -1.17,
+      "names": 1180
+    },
+    "2026-09-28": {
+      "base_rate_pct": 29.5,
+      "eq_weight_return_pct": -1.642,
+      "nifty_return_pct": -0.99,
+      "names": 1177
+    },
+    "2026-10-05": {
+      "base_rate_pct": 27.2,
+      "eq_weight_return_pct": -1.566,
+      "nifty_return_pct": -0.16,
+      "names": 1182
+    },
+    "2026-10-12": {
+      "base_rate_pct": 46.5,
+      "eq_weight_return_pct": -0.188,
+      "nifty_return_pct": 3.5,
+      "names": 1161
+    },
+    "2026-10-19": {
+      "base_rate_pct": 10.5,
+      "eq_weight_return_pct": -5.66,
+      "nifty_return_pct": -0.59,
+      "names": 1156
+    },
+    "2026-10-26": {
+      "base_rate_pct": 47.6,
+      "eq_weight_return_pct": -0.075,
+      "nifty_return_pct": 1.32,
+      "names": 1126
+    }
+  },
+  "baselines": {
+    "random": {
+      "predicted": 232,
+      "hits": 73,
+      "losses": 159,
+      "win_rate_pct": 31.5,
+      "expectancy_pct": -0.965,
+      "profit_factor": 0.57,
+      "avg_up_pct": 4.09,
+      "avg_down_pct": -3.29
+    },
+    "momentum_20d": {
+      "predicted": 207,
+      "hits": 82,
+      "losses": 125,
+      "win_rate_pct": 39.6,
+      "expectancy_pct": -1.115,
+      "profit_factor": 0.7,
+      "avg_up_pct": 6.53,
+      "avg_down_pct": -6.13
+    },
+    "delivery": {
+      "predicted": 227,
+      "hits": 81,
+      "losses": 146,
+      "win_rate_pct": 35.7,
+      "expectancy_pct": -0.703,
+      "profit_factor": 0.68,
+      "avg_up_pct": 4.25,
+      "avg_down_pct": -3.45
+    },
+    "pullback": {
+      "predicted": 211,
+      "hits": 71,
+      "losses": 140,
+      "win_rate_pct": 33.6,
+      "expectancy_pct": -0.6,
+      "profit_factor": 0.69,
+      "avg_up_pct": 4.06,
+      "avg_down_pct": -2.96
+    },
+    "breakout": {
+      "predicted": 57,
+      "hits": 14,
+      "losses": 43,
+      "win_rate_pct": 24.6,
+      "expectancy_pct": -0.92,
+      "profit_factor": 0.41,
+      "avg_up_pct": 2.64,
+      "avg_down_pct": -2.08
+    }
+  },
+  "by_horizon": {
+    "random": {
+      "4_sessions": {
+        "predicted": 232,
+        "hits": 73,
+        "losses": 159,
+        "win_rate_pct": 31.5,
+        "expectancy_pct": -0.965,
+        "profit_factor": 0.57,
+        "avg_up_pct": 4.09,
+        "avg_down_pct": -3.29
+      },
+      "10_sessions": {
+        "predicted": 222,
+        "hits": 64,
+        "losses": 158,
+        "win_rate_pct": 28.8,
+        "expectancy_pct": -1.212,
+        "profit_factor": 0.6,
+        "avg_up_pct": 6.27,
+        "avg_down_pct": -4.24
+      },
+      "20_sessions": {
+        "predicted": 209,
+        "hits": 57,
+        "losses": 152,
+        "win_rate_pct": 27.3,
+        "expectancy_pct": -1.361,
+        "profit_factor": 0.59,
+        "avg_up_pct": 7.16,
+        "avg_down_pct": -4.56
+      }
+    },
+    "momentum_20d": {
+      "4_sessions": {
+        "predicted": 207,
+        "hits": 82,
+        "losses": 125,
+        "win_rate_pct": 39.6,
+        "expectancy_pct": -1.115,
+        "profit_factor": 0.7,
+        "avg_up_pct": 6.53,
+        "avg_down_pct": -6.13
+      },
+      "10_sessions": {
+        "predicted": 188,
+        "hits": 64,
+        "losses": 124,
+        "win_rate_pct": 34.0,
+        "expectancy_pct": -1.137,
+        "profit_factor": 0.75,
+        "avg_up_pct": 10.09,
+        "avg_down_pct": -6.93
+      },
+      "20_sessions": {
+        "predicted": 171,
+        "hits": 59,
+        "losses": 112,
+        "win_rate_pct": 34.5,
+        "expectancy_pct": -0.839,
+        "profit_factor": 0.82,
+        "avg_up_pct": 11.13,
+        "avg_down_pct": -7.14
+      }
+    },
+    "delivery": {
+      "4_sessions": {
+        "predicted": 227,
+        "hits": 81,
+        "losses": 146,
+        "win_rate_pct": 35.7,
+        "expectancy_pct": -0.703,
+        "profit_factor": 0.68,
+        "avg_up_pct": 4.25,
+        "avg_down_pct": -3.45
+      },
+      "10_sessions": {
+        "predicted": 217,
+        "hits": 62,
+        "losses": 155,
+        "win_rate_pct": 28.6,
+        "expectancy_pct": -1.116,
+        "profit_factor": 0.62,
+        "avg_up_pct": 6.35,
+        "avg_down_pct": -4.1
+      },
+      "20_sessions": {
+        "predicted": 205,
+        "hits": 62,
+        "losses": 143,
+        "win_rate_pct": 30.2,
+        "expectancy_pct": -0.945,
+        "profit_factor": 0.68,
+        "avg_up_pct": 6.58,
+        "avg_down_pct": -4.21
+      }
+    },
+    "pullback": {
+      "4_sessions": {
+        "predicted": 211,
+        "hits": 71,
+        "losses": 140,
+        "win_rate_pct": 33.6,
+        "expectancy_pct": -0.6,
+        "profit_factor": 0.69,
+        "avg_up_pct": 4.06,
+        "avg_down_pct": -2.96
+      },
+      "10_sessions": {
+        "predicted": 200,
+        "hits": 65,
+        "losses": 135,
+        "win_rate_pct": 32.5,
+        "expectancy_pct": -0.708,
+        "profit_factor": 0.72,
+        "avg_up_pct": 5.53,
+        "avg_down_pct": -3.71
+      },
+      "20_sessions": {
+        "predicted": 189,
+        "hits": 61,
+        "losses": 128,
+        "win_rate_pct": 32.3,
+        "expectancy_pct": -0.686,
+        "profit_factor": 0.73,
+        "avg_up_pct": 5.86,
+        "avg_down_pct": -3.81
+      }
+    },
+    "breakout": {
+      "4_sessions": {
+        "predicted": 57,
+        "hits": 14,
+        "losses": 43,
+        "win_rate_pct": 24.6,
+        "expectancy_pct": -0.92,
+        "profit_factor": 0.41,
+        "avg_up_pct": 2.64,
+        "avg_down_pct": -2.08
+      },
+      "10_sessions": {
+        "predicted": 57,
+        "hits": 12,
+        "losses": 45,
+        "win_rate_pct": 21.1,
+        "expectancy_pct": -1.109,
+        "profit_factor": 0.39,
+        "avg_up_pct": 3.32,
+        "avg_down_pct": -2.29
+      },
+      "20_sessions": {
+        "predicted": 57,
+        "hits": 10,
+        "losses": 47,
+        "win_rate_pct": 17.5,
+        "expectancy_pct": -1.229,
+        "profit_factor": 0.38,
+        "avg_up_pct": 4.31,
+        "avg_down_pct": -2.41
+      }
+    }
+  },
+  "factor_edge": {
+    "status": "ok",
+    "names": 52930,
+    "delivery_z_rank_correlation": 0.024,
+    "momentum_20d_rank_correlation": -0.0025,
+    "delivery_quintiles": [
+      {
+        "bucket": "(-5.186, -0.844]",
+        "names": 10586,
+        "mean_return_pct": -0.626,
+        "hit_rate_pct": 40.4
+      },
+      {
+        "bucket": "(-0.844, -0.281]",
+        "names": 10586,
+        "mean_return_pct": -0.573,
+        "hit_rate_pct": 40.6
+      },
+      {
+        "bucket": "(-0.281, 0.194]",
+        "names": 10586,
+        "mean_return_pct": -0.512,
+        "hit_rate_pct": 41.0
+      },
+      {
+        "bucket": "(0.194, 0.747]",
+        "names": 10586,
+        "mean_return_pct": -0.546,
+        "hit_rate_pct": 40.9
+      },
+      {
+        "bucket": "(0.747, 5.886]",
+        "names": 10586,
+        "mean_return_pct": -0.348,
+        "hit_rate_pct": 42.0
+      }
+    ],
+    "reading": "Delivery's own-history z-score has a positive rank correlation with the next week."
+  },
+  "summary": {
+    "weeks": 48,
+    "base_rate_pct": 40.9,
+    "best_baseline": "pullback"
+  }
+}

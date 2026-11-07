@@ -10,17 +10,18 @@ from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Depends, Sec
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from pathlib import Path
 from datetime import datetime, date
 from typing import Dict, Any, List, Optional
 import logging
 
-from app.config import REPORTS_DIR, BASE_DIR
+from app.config import REPORTS_DIR, BASE_DIR, MARKET_OPEN_TIME, MARKET_CLOSE_TIME
 from app.database import init_db, get_db_connection
 from app.data.nse_calendar import is_trading_day
 from app.data.nifty_constituents import NIFTY_UNIVERSE, FULL_NSE_UNIVERSE
+from app.services.listings import resolve_equity, search_equities
 from app.models import (
     TransactionCreate, UserRegisterRequest, UserLoginRequest,
     CorporateActionCreate, EmailDispatchRequest
@@ -35,12 +36,18 @@ from app.services.market_data import (
 )
 from app.services.prediction_engine import (
     generate_daily_recommendations, get_latest_recommendations,
+    get_active_recommendation_for_symbol,
     reset_daily_recommendations, get_scan_progress
 )
 from app.services.fundamentals import get_company_fundamentals
 from app.services.corporate_actions import record_corporate_action, apply_pending_corporate_actions
 from app.services.historical_backtest import run_historical_backtest
-from app.services.historical_tester import get_available_test_dates, run_historical_test
+from app.services.weekly_engine_backtest import (
+    get_weekly_backtest_progress,
+    load_saved_weekly_backtest,
+    resolve_window,
+    start_weekly_engine_backtest,
+)
 from app.services.email_dispatcher import dispatch_morning_report
 from app.services.portfolio import (
     record_transaction, compute_portfolio_fifo,
@@ -118,12 +125,16 @@ def serve_index():
 def get_system_status() -> Dict[str, Any]:
     """Retrieve market hours status, Nifty 50, India VIX, and system health."""
     today = date.today()
-    market_open = is_trading_day(today)
+    trading_day = is_trading_day(today)
+    now = datetime.now()
+    open_clock = datetime.strptime(MARKET_OPEN_TIME, "%H:%M").time()
+    close_clock = datetime.strptime(MARKET_CLOSE_TIME, "%H:%M").time()
+    session_open = trading_day and open_clock <= now.time() < close_clock
     macro = get_nifty50_live_status()
     
     return {
-        "is_trading_day": market_open,
-        "market_status": "OPEN" if market_open else "CLOSED (Holiday / Weekend)",
+        "is_trading_day": trading_day,
+        "market_status": "OPEN" if session_open else "CLOSED",
         "current_date": today.isoformat(),
         "nifty50": macro.get("nifty50_price"),
         "nifty50_change_pct": macro.get("nifty50_change_pct"),
@@ -183,32 +194,39 @@ def get_screening_progress() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------
-# HISTORICAL PREDICTION REALITY CHECK & BACKTEST SANDBOX
+# WEEKLY LIVE-ENGINE BACKTEST (MONDAY THROUGH SATURDAY)
 # ---------------------------------------------------------
-@app.get("/api/historical-test/dates")
-def get_historical_test_dates_api() -> Dict[str, Any]:
-    """Retrieve available preset and recorded past dates for historical prediction testing."""
-    return get_available_test_dates()
+@app.get("/api/backtest/weekly/latest")
+def get_weekly_engine_backtest() -> JSONResponse:
+    """Return the saved Monday-to-Saturday score the next phase reads."""
+    report = load_saved_weekly_backtest()
+    return JSONResponse(
+        {"status": "READY" if report else "EMPTY", "report": report},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
-@app.post("/api/historical-test/run")
-def trigger_historical_test_api(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Run point-in-time prediction for a selected past date and compare with actual subsequent market outcomes.
-    """
-    target_date = payload.get("target_date")
-    if not target_date:
-        raise HTTPException(status_code=400, detail="Missing required field: target_date (YYYY-MM-DD)")
+@app.get("/api/backtest/weekly/progress")
+def get_weekly_engine_backtest_progress() -> JSONResponse:
+    """Poll a running weekly backtest. The finished score is read from disk, not from this payload."""
+    progress = get_weekly_backtest_progress()
+    progress.pop("report", None)
+    return JSONResponse(progress, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/backtest/weekly/run")
+def run_weekly_engine_backtest_api(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Replay the current prediction engine once each Monday and score it through Saturday."""
+    preset = str(payload.get("window") or payload.get("preset") or "6mo")
     try:
-        force_recalc = payload.get("force_recalculate", True)
-        report = run_historical_test(target_date, force_recalculate=force_recalc)
-        return {
-            "status": "COMPLETED",
-            "report": report
-        }
-    except Exception as e:
-        logger.error(f"Error running historical prediction test for {target_date}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        resolve_window(preset, payload.get("start_date"), payload.get("end_date"))
+        return start_weekly_engine_backtest(
+            preset=preset,
+            start_date=payload.get("start_date"),
+            end_date=payload.get("end_date"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 
@@ -414,10 +432,16 @@ def create_report() -> Dict[str, Any]:
     return generate_morning_report()
 
 
-@app.get("/api/quote/{symbol}")
-def get_symbol_quote(symbol: str) -> Dict[str, Any]:
-    """Get latest market quote and metadata for any scrip."""
-    return get_latest_quote(symbol)
+@app.get("/api/quote/{symbol:path}")
+def get_symbol_quote(symbol: str, exchange: str = "") -> Dict[str, Any]:
+    """Get latest market quote and metadata for an NSE or BSE scrip, symbol or company name."""
+    listing = resolve_equity(symbol, exchange=exchange, remote=True)
+    if not listing:
+        raise HTTPException(status_code=404, detail=f"No NSE or BSE listing found for '{symbol.strip()}'")
+    quote = get_latest_quote(listing["symbol"], yahoo_ticker=listing["yahoo_ticker"])
+    quote["name"] = listing["name"]
+    quote["exchange"] = listing["exchange"]
+    return quote
 
 
 @app.get("/api/universe")
@@ -434,54 +458,36 @@ def get_universe(full: bool = True) -> List[Dict[str, Any]]:
 @app.get("/api/search")
 def search_stocks(q: str = "") -> List[Dict[str, Any]]:
     """
-    Real-time autocomplete and search across all 2,620+ Indian NSE-listed equities
-    by symbol, ticker prefix, or company name.
+    Autocomplete across NSE masters and BSE listings.
+    Matches ticker, ticker prefix, and company name. BSE-only names such as
+    'Aayush Art and Bullion' resolve to their exchange symbol instead of being
+    sent to the chart as a fake NSE ticker.
     """
-    if not q or not q.strip():
-        return FULL_NSE_UNIVERSE[:50]
-    query = q.strip().upper()
-
-    exact = []
-    prefix = []
-    contains_sym = []
-    contains_name = []
-
-    for item in FULL_NSE_UNIVERSE:
-        sym = item["symbol"]
-        name = item["name"].upper()
-        if sym == query:
-            exact.append(item)
-        elif sym.startswith(query):
-            prefix.append(item)
-        elif query in sym:
-            contains_sym.append(item)
-        elif query in name:
-            contains_name.append(item)
-
-    results = exact + prefix + contains_sym + contains_name
-    seen = set()
-    unique = []
-    for item in results:
-        if item["symbol"] not in seen:
-            seen.add(item["symbol"])
-            unique.append(item)
-    return unique[:50]
+    return search_equities(q, limit=20)
 
 
 
-@app.get("/api/chart/{symbol}")
-def get_chart_data(symbol: str, period: str = "3mo") -> Dict[str, Any]:
+@app.get("/api/chart/{symbol:path}")
+def get_chart_data(symbol: str, period: str = "3mo", exchange: str = "") -> Dict[str, Any]:
     """Retrieve historical price chart data and projected 5-day ATR volatility cone."""
     import pandas as pd
     from app.services.market_data import get_stock_history
-    from app.services.indicators import compute_all_indicators, compute_mathematical_5d_range
+    from app.services.indicators import compute_all_indicators
     from app.data.nse_calendar import get_nth_trading_day
-    from app.data.nifty_constituents import get_symbol_info
 
-    clean_sym = symbol.upper().replace(".NS", "").strip()
-    df = get_stock_history(clean_sym, period=period)
+    listing = resolve_equity(symbol, exchange=exchange, remote=True)
+    if not listing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NSE or BSE listing matches '{symbol.strip()}'. Search by ticker or company name and pick the exchange row."
+        )
+    clean_sym = listing["symbol"]
+    df = get_stock_history(clean_sym, period=period, yahoo_ticker=listing["yahoo_ticker"])
     if df.empty or len(df) < 5:
-        raise HTTPException(status_code=404, detail=f"No price history found for {clean_sym}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Price history is unavailable for {listing['name']} ({clean_sym} on {listing['exchange']})."
+        )
 
     dates = [d.strftime("%Y-%m-%d") if hasattr(d, 'strftime') else str(d)[:10] for d in df.index]
     closes = [round(float(c), 2) for c in df['Close']]
@@ -493,36 +499,37 @@ def get_chart_data(symbol: str, period: str = "3mo") -> Dict[str, Any]:
     atr = tech["atr_14"]
     vol_5d = tech["volatility_5d_pct"]
 
-    range_data = compute_mathematical_5d_range(
-        cmp=cmp, 
-        atr=atr, 
-        vol_5d_pct=vol_5d, 
-        signal=tech["signal"], 
-        rsi=tech["rsi_14"]
-    )
-    target = range_data["expected_target_price"]
-    high = range_data["expected_range_high"]
-    low = range_data["expected_range_low"]
+    # The band is the ATR cone. Score and direction are attached only when this
+    # ticker is on the active desk book.
+    safe_atr = atr if atr > 0 else cmp * 0.02
+    vol_move = max(safe_atr * 1.5, cmp * (vol_5d / 100.0) * 0.85)
+    half_width = vol_move * 1.15
+    high = round(cmp + half_width, 2)
+    low = round(cmp - half_width, 2)
 
     today = date.today()
     projected_dates = []
-    projected_targets = []
     projected_highs = []
     projected_lows = []
+
+    saved = get_active_recommendation_for_symbol(clean_sym)
+    target = float(saved["expected_target_price"]) if saved and saved.get("expected_target_price") else None
+    projected_targets = []
 
     for i in range(1, 6):
         day_date = get_nth_trading_day(today, i)
         projected_dates.append(day_date.isoformat())
         progress = i / 5.0
-        projected_targets.append(round(cmp + (target - cmp) * progress, 2))
-        projected_highs.append(round(cmp + (high - cmp) * progress, 2))
-        projected_lows.append(round(cmp + (low - cmp) * progress, 2))
-
-    meta = get_symbol_info(clean_sym)
+        projected_highs.append(round(cmp + half_width * progress, 2))
+        projected_lows.append(round(cmp - half_width * progress, 2))
+        if target is not None:
+            projected_targets.append(round(cmp + (target - cmp) * progress, 2))
 
     return {
         "symbol": clean_sym,
-        "name": meta.get("name", clean_sym),
+        "name": listing.get("name", clean_sym),
+        "exchange": listing.get("exchange", "NSE"),
+        "sector": listing.get("sector", "Indian Equities"),
         "dates": dates,
         "closes": closes,
         "sma20": sma20,
@@ -531,11 +538,14 @@ def get_chart_data(symbol: str, period: str = "3mo") -> Dict[str, Any]:
         "rsi_14": tech["rsi_14"],
         "support": tech["support"],
         "resistance": tech["resistance"],
+        "scored": saved is not None,
+        "scored_on": None if saved is None else saved.get("rec_date"),
+        "composite_score": None if saved is None else saved.get("composite_score"),
         "expected_target_price": target,
         "expected_range_low": low,
         "expected_range_high": high,
-        "expected_appreciation_pct": range_data["expected_appreciation_pct"],
-        "direction": range_data.get("direction", "NEUTRAL"),
+        "expected_appreciation_pct": None if saved is None else saved.get("expected_appreciation_pct"),
+        "direction": None if saved is None else saved.get("direction"),
         "projected_dates": projected_dates,
         "projected_targets": projected_targets,
         "projected_highs": projected_highs,
@@ -543,17 +553,28 @@ def get_chart_data(symbol: str, period: str = "3mo") -> Dict[str, Any]:
     }
 
 
-@app.get("/api/debate/{symbol}")
-def get_stock_analyst_debate(symbol: str) -> Dict[str, Any]:
+@app.get("/api/debate/{symbol:path}")
+def get_stock_analyst_debate(symbol: str, exchange: str = "") -> Dict[str, Any]:
     """Run AI Analyst Multi-Agent Consensus and Bull vs Bear debate synthesis for a scrip."""
     from app.services.prediction_engine import score_single_stock
     from app.services.llm_agent import run_multi_agent_analyst_team
 
-    clean_sym = symbol.upper().replace(".NS", "").strip()
+    listing = resolve_equity(symbol, exchange=exchange, remote=True)
+    if not listing:
+        raise HTTPException(status_code=404, detail=f"No NSE or BSE listing found for '{symbol.strip()}'.")
+    clean_sym = listing["symbol"]
     try:
-        stock_analysis = score_single_stock(clean_sym)
+        stock_analysis = score_single_stock(
+            clean_sym,
+            yahoo_ticker=listing["yahoo_ticker"],
+            enforce_liquidity_floor=False,
+            display_name=listing["name"],
+        )
         if not stock_analysis:
-            raise HTTPException(status_code=404, detail=f"Stock {clean_sym} analysis unavailable or vetoed.")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Not enough verified price history to score {listing['name']} ({clean_sym} on {listing['exchange']})."
+            )
 
         debate_result = run_multi_agent_analyst_team(stock_analysis)
         return {
@@ -577,13 +598,21 @@ def get_stock_analyst_debate(symbol: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Debate failed: {str(e)}")
 
 
-@app.get("/api/intelligence/{symbol}")
-def get_stock_intelligence_endpoint(symbol: str) -> Dict[str, Any]:
+@app.get("/api/intelligence/{symbol:path}")
+def get_stock_intelligence_endpoint(symbol: str, exchange: str = "") -> Dict[str, Any]:
     """Retrieve live internet hot news, price-deciding factors, and price-volume liquidity flow."""
     from app.services.stock_intelligence import get_stock_deep_intelligence
-    clean_sym = symbol.upper().replace(".NS", "").strip()
+    listing = resolve_equity(symbol, exchange=exchange, remote=True)
+    if not listing:
+        raise HTTPException(status_code=404, detail=f"No NSE or BSE listing found for '{symbol.strip()}'.")
+    clean_sym = listing["symbol"]
     try:
-        return get_stock_deep_intelligence(clean_sym)
+        return get_stock_deep_intelligence(
+            clean_sym,
+            yahoo_ticker=listing["yahoo_ticker"],
+            company_name=listing["name"],
+            exchange=listing["exchange"],
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch stock intelligence for {clean_sym}: {str(e)}")
 
@@ -591,13 +620,19 @@ def get_stock_intelligence_endpoint(symbol: str) -> Dict[str, Any]:
 # ---------------------------------------------------------
 # PHASE 2: VERIFIED FUNDAMENTALS & CORPORATE ACTIONS
 # ---------------------------------------------------------
-@app.get("/api/fundamentals/{symbol}")
-def get_fundamentals_endpoint(symbol: str) -> Dict[str, Any]:
+@app.get("/api/fundamentals/{symbol:path}")
+def get_fundamentals_endpoint(symbol: str, exchange: str = "") -> Dict[str, Any]:
     """Retrieve verified financial statement fundamental metrics (P/E, ROE, ROCE, D/E, Revenue Growth)."""
-    clean_sym = symbol.upper().replace(".NS", "").strip()
-    funds = get_company_fundamentals(clean_sym)
+    listing = resolve_equity(symbol, exchange=exchange, remote=True)
+    if not listing:
+        raise HTTPException(status_code=404, detail=f"No NSE or BSE listing found for '{symbol.strip()}'.")
+    funds = get_company_fundamentals(
+        listing["symbol"],
+        yahoo_ticker=listing["yahoo_ticker"],
+        company_name=listing["name"],
+    )
     if not funds:
-        raise HTTPException(status_code=404, detail=f"Fundamentals unavailable for {clean_sym}")
+        raise HTTPException(status_code=404, detail=f"Fundamentals unavailable for {listing['symbol']}")
     return funds
 
 
@@ -714,6 +749,34 @@ def backfill_bhavcopy_endpoint(
     except Exception as e:
         logger.error(f"Bhavcopy backfill error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/market-data/eod-sync")
+def eod_sync_endpoint(
+    trading_days: int = Query(260, ge=10, le=750),
+    exchanges: str = Query("NSE,BSE"),
+) -> Dict[str, Any]:
+    """Download and ingest NSE + BSE bhavcopies for every listed equity. Already-ingested sessions are skipped."""
+    from app.services.eod_store import sync_eod_store
+    try:
+        return sync_eod_store(trading_days=trading_days, exchanges=[e.strip() for e in exchanges.split(",") if e.strip()])
+    except Exception as e:
+        logger.error(f"EOD sync error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/market-data/universe-preview")
+def universe_preview_endpoint() -> Dict[str, Any]:
+    """Count of NSE + BSE equities the next scan will cover under the current SCAN_* settings."""
+    from collections import Counter
+    from app.services.eod_store import get_full_market_universe, get_eod_store_coverage
+    universe = get_full_market_universe()
+    return {
+        "total": len(universe),
+        "by_exchange": {ex: sum(u["exchange"] == ex for u in universe) for ex in ("NSE", "BSE")},
+        "by_series": dict(Counter(f"{u['exchange']}:{u['series']}" for u in universe)),
+        "coverage": get_eod_store_coverage(),
+    }
 
 
 @app.get("/api/paper-trading/status")

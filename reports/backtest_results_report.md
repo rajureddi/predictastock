@@ -1,6 +1,6 @@
 # PredictaStock Institutional Walk-Forward Backtest & Strategy Audit
 
-**Generated:** 2026-10-19 23:17:02 IST  
+**Generated:** 2026-11-07 23:02:28 IST  
 **Evaluation Standard:** 5-Trading-Session T+1 Open Path-Dependent Execution  
 **Sample Universe:** 10 Front-Line Indian Equities (RELIANCE, TCS, INFY, ICICIBANK, HDFCBANK...)  
 **Friction Deducted:** 0.3% (0.25% Statutory Delivery Charges + 0.05% Execution Slippage)  
@@ -12,35 +12,35 @@
 
 | Evaluation Set | Active Trades (N) | Hit Rate (%) | Avg Net Return (%) | Median Net (%) | Win/Loss | Profit Factor | Max DD (%) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Development (In-Sample 50%)** | 2 | 100.0% | +0.98% | +0.98% | 2.0 | 1.96 | 0.0% |
-| **Validation (Holdout 20%)** | 2 | 50.0% | -1.17% | -1.17% | 1.0 | 0.0 | 2.34% |
-| **Untouched Final Test (30%)** | 1 | 0.0% | -2.38% | -2.38% | 0.0 | 0.0 | 0.0% |
+| **Development (In-Sample 50%)** | 1 | 100.0% | +1.55% | +1.55% | 1.0 | 1.55 | 0.0% |
+| **Validation (Holdout 20%)** | 2 | 0.0% | -2.51% | -2.51% | 0.0 | 0.0 | 2.95% |
+| **Untouched Final Test (30%)** | 1 | 0.0% | -2.19% | -2.19% | 0.0 | 0.0 | 0.0% |
 
 ---
 
 ## 2. Compounded ₹10,00,000 Portfolio Ledger Simulation (Untouched Test Cohort)
 
 - **Initial Portfolio Capital:** ₹1,000,000.00
-- **Final Portfolio Equity:** ₹995,242.88
-- **Compounded Total Return:** -0.48%
-- **Compounded Max Drawdown:** 0.48%
+- **Final Portfolio Equity:** ₹995,630.73
+- **Compounded Total Return:** -0.44%
+- **Compounded Max Drawdown:** 0.44%
 - **Annualized Sharpe Ratio:** -5.0
 - **Active Trades Taken:** 1 (Skipped due to 5-slot cap: 0)
 
 ---
 
 ## 3. Strict Evidence Gate & 80% Release Check
-*(Every candidate must pass Nifty regime, relative strength, technical, money-flow, RSI, MACD, volume, verified delivery, composite, and solvency checks.)*
+*(Regime sizes the position. A candidate still has to clear relative strength, technical, money-flow, RSI, MACD, volume, verified delivery, composite, and solvency.)*
 
 | Metric | Strict Dev (50%) | Strict Val (20%) | Strict Test (30%) |
 | :--- | :---: | :---: | :---: |
-| **Qualified Trades (N)** | 2 | 2 | 1 |
-| **Directional Hit Rate** | 100.0% | 50.0% | 0.0% |
-| **Avg Net Return (5-Day)** | +0.98% | -1.17% | -2.38% |
-| **Profit Factor** | 1.96 | 0.0 | 0.0 |
+| **Qualified Trades (N)** | 1 | 2 | 1 |
+| **Directional Hit Rate** | 100.0% | 0.0% | 0.0% |
+| **Avg Net Return (5-Day)** | +1.55% | -2.51% | -2.19% |
+| **Profit Factor** | 1.55 | 0.0 | 0.0 |
 
 **Release Verdict:** **PAPER-TRADE ONLY**
-*The strict evidence gate remains paper-trade only. It needs at least 50 untouched trades, 80% hit rate, positive net return, and positive Nifty alpha. Current untouched result: N=1, hit rate 0.0%, net return -2.38%, alpha +1.14%.*
+*The book stays paper-trade only. It needs at least 100 untouched trades, expectancy of 0.15% or better, profit factor 1.30, and positive Nifty alpha. Current untouched result: N=1, hit rate 0.0%, net return -2.19%, profit factor 0.00, alpha -0.49%.*
 
 ---
 

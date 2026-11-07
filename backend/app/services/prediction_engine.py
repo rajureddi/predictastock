@@ -685,6 +685,19 @@ def score_single_stock(
     }
 
 
+def _is_desk_candidate(analysis: Dict[str, Any]) -> bool:
+    """A name the live desk can rank: the strict gate, or the bullish fallback."""
+    if analysis.get("trade_block"):
+        return False
+    if _is_primary_long(analysis):
+        return True
+    return (
+        analysis.get("direction") == "BULLISH"
+        and float(analysis.get("expected_appreciation_pct", 0) or 0) >= 1.2
+        and float(analysis.get("win_probability_pct", 0) or 0) >= 58.0
+    )
+
+
 def _is_primary_long(analysis: Dict[str, Any]) -> bool:
     """Same admission rule the live desk uses before ranking."""
     is_actionable = (
@@ -957,7 +970,7 @@ def select_present_engine_picks(
             evaluated += 1
             if analysis:
                 all_evaluated.append(analysis)
-                if _is_primary_long(analysis):
+                if _is_desk_candidate(analysis):
                     qualified += 1
             stage = (
                 f"Evaluated {sym} ({name}) · {qualified} qualified"
@@ -1300,4 +1313,24 @@ def get_latest_recommendations(
         
     conn.close()
     return recs
+
+
+def get_active_recommendation_for_symbol(symbol: str) -> Optional[Dict[str, Any]]:
+    """Latest active desk score for one ticker. None when the screener has not published it."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT symbol, rec_date, direction, composite_score, expected_target_price,
+                   expected_appreciation_pct, action_label, win_probability_pct
+            FROM recommendations
+            WHERE symbol = ? AND (is_superseded = 0 OR is_superseded IS NULL)
+            ORDER BY rec_date DESC, created_at DESC
+            LIMIT 1
+            """,
+            (str(symbol or "").upper(),),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
 

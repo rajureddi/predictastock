@@ -1,0 +1,120 @@
+{
+  "slice_trades": 99,
+  "matrix": {
+    "cmf_gt_0__surge_lt_1_4": {
+      "trades": 23,
+      "win_rate_pct": 52.2,
+      "expectancy_pct": 0.48,
+      "profit_factor": 1.39
+    },
+    "cmf_gt_0__surge_ge_1_4": {
+      "trades": 26,
+      "win_rate_pct": 46.2,
+      "expectancy_pct": 0.368,
+      "profit_factor": 1.26
+    },
+    "cmf_le_0__surge_lt_1_4": {
+      "trades": 22,
+      "win_rate_pct": 40.9,
+      "expectancy_pct": 0.336,
+      "profit_factor": 1.28
+    },
+    "cmf_le_0__surge_ge_1_4": {
+      "trades": 28,
+      "win_rate_pct": 25.0,
+      "expectancy_pct": -0.594,
+      "profit_factor": 0.5
+    }
+  },
+  "cmf_gt_0": {
+    "trades": 49,
+    "win_rate_pct": 49.0,
+    "expectancy_pct": 0.42,
+    "profit_factor": 1.31,
+    "quarters": {
+      "2025-12_to_2026-02": {
+        "trades": 16,
+        "win_rate_pct": 37.5,
+        "expectancy_pct": -1.054,
+        "profit_factor": 0.41
+      },
+      "2026-03_to_2026-05": {
+        "trades": 12,
+        "win_rate_pct": 66.7,
+        "expectancy_pct": 1.802,
+        "profit_factor": 2.4
+      },
+      "2026-06_to_2026-08": {
+        "trades": 16,
+        "win_rate_pct": 56.2,
+        "expectancy_pct": 1.353,
+        "profit_factor": 2.78
+      },
+      "2026-09_to_2026-10": {
+        "trades": 5,
+        "win_rate_pct": 20.0,
+        "expectancy_pct": -1.164,
+        "profit_factor": 0.37
+      }
+    },
+    "curve": {
+      "weeks": 32,
+      "losing_weeks": 16,
+      "max_drawdown_pct": 14.86,
+      "longest_losing_week_streak": 5,
+      "ending_equity": 1.058
+    }
+  },
+  "cmf_gt_0_and_surge_lt_1_4": {
+    "trades": 23,
+    "win_rate_pct": 52.2,
+    "expectancy_pct": 0.48,
+    "profit_factor": 1.39,
+    "quarters": {
+      "2025-12_to_2026-02": {
+        "trades": 9,
+        "win_rate_pct": 55.6,
+        "expectancy_pct": -0.573,
+        "profit_factor": 0.68
+      },
+      "2026-03_to_2026-05": {
+        "trades": 4,
+        "win_rate_pct": 75.0,
+        "expectancy_pct": 2.272,
+        "profit_factor": 4.74
+      },
+      "2026-06_to_2026-08": {
+        "trades": 5,
+        "win_rate_pct": 60.0,
+        "expectancy_pct": 2.584,
+        "profit_factor": 16.02
+      },
+      "2026-09_to_2026-10": {
+        "trades": 5,
+        "win_rate_pct": 20.0,
+        "expectancy_pct": -1.164,
+        "profit_factor": 0.37
+      }
+    },
+    "curve": {
+      "weeks": 19,
+      "losing_weeks": 10,
+      "max_drawdown_pct": 9.03,
+      "longest_losing_week_streak": 4,
+      "ending_equity": 1.065
+    }
+  },
+  "all_quiet_pullbacks": {
+    "trades": 99,
+    "win_rate_pct": 40.4,
+    "expectancy_pct": 0.115,
+    "profit_factor": 1.09,
+    "curve": {
+      "weeks": 43,
+      "losing_weeks": 24,
+      "max_drawdown_pct": 14.51,
+      "longest_losing_week_streak": 8,
+      "ending_equity": 0.9628
+    }
+  }
+}

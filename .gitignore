@@ -44,6 +44,7 @@ backend/app/data/*.db
 backend/app/data/backups/
 backend/app/data/fundamentals_cache/
 backend/app/data/bhavcopy/*.csv
+backend/app/data/bhavcopy/bse/
 !backend/app/data/bhavcopy/sec_bhavdata_full_14102026.csv
 
 # Node & Frontend Dependencies
