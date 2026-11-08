@@ -81,3 +81,28 @@ def test_barrier_physics_in_indicators():
     assert 2.5 <= stop_dist_pct <= 4.0
     assert res["direction"] == "BULLISH"
     assert res["win_probability_pct"] == 65.0
+
+
+def test_microstructure_depth_and_tape():
+    from app.services.microstructure import get_market_microstructure
+    
+    depth = get_market_microstructure("RELIANCE", depth_levels=10, tape_prints_count=20)
+    assert depth["symbol"] == "RELIANCE"
+    assert len(depth["bids"]) == 10
+    assert len(depth["asks"]) == 10
+    assert depth["best_bid"] < depth["best_ask"]
+    assert depth["spread"] > 0
+    assert len(depth["tape"]) == 20
+    
+    for item in depth["tape"]:
+        assert item["side"] in ["B", "S"]
+        assert item["price"] > 0
+        assert item["size"] > 0
+        assert ":" in item["time"]
+        
+    # Monotonic cumulative depth check
+    for i in range(1, len(depth["bids"])):
+        assert depth["bids"][i]["cumulative"] > depth["bids"][i-1]["cumulative"]
+    for i in range(1, len(depth["asks"])):
+        assert depth["asks"][i]["cumulative"] > depth["asks"][i-1]["cumulative"]
+

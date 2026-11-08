@@ -490,7 +490,11 @@ def get_chart_data(symbol: str, period: str = "3mo", exchange: str = "") -> Dict
         )
 
     dates = [d.strftime("%Y-%m-%d") if hasattr(d, 'strftime') else str(d)[:10] for d in df.index]
+    opens = [round(float(o), 2) for o in df['Open']]
+    highs = [round(float(h), 2) for h in df['High']]
+    lows = [round(float(l), 2) for l in df['Low']]
     closes = [round(float(c), 2) for c in df['Close']]
+    volumes = [int(v) if not pd.isna(v) else 0 for v in (df['Volume'] if 'Volume' in df.columns else [0] * len(df))]
     sma_series = df['Close'].rolling(20).mean()
     sma20 = [round(float(s), 2) if not pd.isna(s) else None for s in sma_series]
 
@@ -525,13 +529,20 @@ def get_chart_data(symbol: str, period: str = "3mo", exchange: str = "") -> Dict
         if target is not None:
             projected_targets.append(round(cmp + (target - cmp) * progress, 2))
 
+    stop_loss = float(saved["stop_loss"]) if saved and saved.get("stop_loss") else round(cmp - (safe_atr * 1.5), 2)
+    win_prob = float(saved.get("win_probability_pct") or 50.0) if saved else None
+
     return {
         "symbol": clean_sym,
         "name": listing.get("name", clean_sym),
         "exchange": listing.get("exchange", "NSE"),
         "sector": listing.get("sector", "Indian Equities"),
         "dates": dates,
+        "opens": opens,
+        "highs": highs,
+        "lows": lows,
         "closes": closes,
+        "volumes": volumes,
         "sma20": sma20,
         "cmp": cmp,
         "atr_14": atr,
@@ -542,6 +553,8 @@ def get_chart_data(symbol: str, period: str = "3mo", exchange: str = "") -> Dict
         "scored_on": None if saved is None else saved.get("rec_date"),
         "composite_score": None if saved is None else saved.get("composite_score"),
         "expected_target_price": target,
+        "stop_loss": stop_loss,
+        "win_probability_pct": win_prob,
         "expected_range_low": low,
         "expected_range_high": high,
         "expected_appreciation_pct": None if saved is None else saved.get("expected_appreciation_pct"),
@@ -551,6 +564,13 @@ def get_chart_data(symbol: str, period: str = "3mo", exchange: str = "") -> Dict
         "projected_highs": projected_highs,
         "projected_lows": projected_lows
     }
+
+
+@app.get("/api/market-depth/{symbol:path}")
+def get_market_depth_and_tape(symbol: str) -> Dict[str, Any]:
+    """Retrieve real-time Level 2 Market Depth and Time & Sales trade prints."""
+    from app.services.microstructure import get_market_microstructure
+    return get_market_microstructure(symbol)
 
 
 @app.get("/api/debate/{symbol:path}")

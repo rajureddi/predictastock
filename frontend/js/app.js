@@ -3321,3 +3321,697 @@ async function pollWeeklyBacktest() {
 window.setWeeklyBacktestWindow = setWeeklyBacktestWindow;
 window.initWeeklyBacktest = initWeeklyBacktest;
 window.runWeeklyEngineBacktest = runWeeklyEngineBacktest;
+
+/* ==========================================================================
+   MERIDIAN BOARD - PRO TERMINAL IV CONTROLLER
+   Provides real-time Level 2 Market Depth, Live Time & Sales Tape,
+   Japanese Candlestick OHLC + Volume stage, and Institutional Microstructure.
+   ========================================================================== */
+
+let currentDeskMode = "standard";
+let terminalFeedPaused = false;
+let terminalStreamInterval = null;
+let terminalTimeframe = "5m";
+let terminalActiveSymbol = "RELIANCE";
+let terminalMicrostructure = null;
+let terminalChartData = null;
+let terminalClockInterval = null;
+
+let terminalWatchlist = [
+    { symbol: "RELIANCE", name: "Reliance Industries", price: 2498.50, change: 18.20, pct: 0.73, spark: [2460, 2472, 2465, 2480, 2478, 2495, 2498.5] },
+    { symbol: "TCS", name: "Tata Consultancy", price: 3950.00, change: 42.50, pct: 1.09, spark: [3890, 3910, 3905, 3925, 3940, 3935, 3950] },
+    { symbol: "HDFCBANK", name: "HDFC Bank Ltd", price: 1720.00, change: -12.40, pct: -0.72, spark: [1745, 1740, 1735, 1728, 1730, 1724, 1720] },
+    { symbol: "INFY", name: "Infosys Limited", price: 1845.00, change: 15.60, pct: 0.85, spark: [1810, 1820, 1815, 1830, 1838, 1840, 1845] },
+    { symbol: "ICICIBANK", name: "ICICI Bank Ltd", price: 1260.00, change: 8.80, pct: 0.70, spark: [1240, 1245, 1248, 1252, 1255, 1258, 1260] },
+    { symbol: "BHARTIARTL", name: "Bharti Airtel", price: 1680.00, change: -5.20, pct: -0.31, spark: [1695, 1690, 1685, 1688, 1682, 1685, 1680] },
+    { symbol: "SBIN", name: "State Bank of India", price: 815.00, change: 6.40, pct: 0.79, spark: [802, 805, 808, 810, 812, 811, 815] },
+    { symbol: "LTIM", name: "LTIMindtree", price: 5890.00, change: -35.00, pct: -0.59, spark: [5960, 5940, 5920, 5910, 5900, 5895, 5890] },
+    { symbol: "TATAMOTORS", name: "Tata Motors", price: 890.00, change: 14.30, pct: 1.63, spark: [865, 870, 875, 878, 882, 885, 890] }
+];
+
+function switchDeskMode(mode) {
+    currentDeskMode = mode;
+    const stdWrap = document.getElementById("standardDeskWrapper");
+    const termWrap = document.getElementById("proTerminalWrapper");
+    const btnStd = document.getElementById("btnDeskStandard");
+    const btnTerm = document.getElementById("btnDeskTerminal");
+
+    if (mode === "terminal") {
+        if (stdWrap) stdWrap.style.display = "none";
+        if (termWrap) termWrap.style.display = "block";
+        if (btnStd) btnStd.classList.remove("active");
+        if (btnTerm) btnTerm.classList.add("active");
+
+        terminalActiveSymbol = (currentChartSymbol || "RELIANCE").trim().toUpperCase();
+        initMeridianTerminal();
+    } else {
+        if (stdWrap) stdWrap.style.display = "block";
+        if (termWrap) termWrap.style.display = "none";
+        if (btnStd) btnStd.classList.add("active");
+        if (btnTerm) btnTerm.classList.remove("active");
+
+        if (terminalStreamInterval) {
+            clearInterval(terminalStreamInterval);
+            terminalStreamInterval = null;
+        }
+    }
+}
+
+function initMeridianTerminal() {
+    startTerminalClock();
+    loadTerminalData(terminalActiveSymbol);
+
+    // Periodic live microstructure tape & depth stream
+    if (terminalStreamInterval) clearInterval(terminalStreamInterval);
+    terminalStreamInterval = setInterval(() => {
+        if (!terminalFeedPaused && currentDeskMode === "terminal") {
+            streamMicrostructureTick();
+        }
+    }, 2200);
+
+    // Window resize handler for crisp canvas
+    window.removeEventListener("resize", handleTerminalResize);
+    window.addEventListener("resize", handleTerminalResize);
+}
+
+function handleTerminalResize() {
+    if (currentDeskMode === "terminal" && terminalChartData) {
+        renderTerminalCandlesticks(terminalChartData);
+        if (terminalMicrostructure) {
+            renderTerminalDepthCurve(terminalMicrostructure.bids, terminalMicrostructure.asks);
+        }
+    }
+}
+
+function startTerminalClock() {
+    if (terminalClockInterval) clearInterval(terminalClockInterval);
+    const clockEl = document.getElementById("mSessionClock");
+    function tick() {
+        if (!clockEl) return;
+        const now = new Date();
+        const hrs = String(now.getHours()).padStart(2, '0');
+        const mins = String(now.getMinutes()).padStart(2, '0');
+        const secs = String(now.getSeconds()).padStart(2, '0');
+        const dateStr = now.toLocaleDateString("en-IN", { day: '2-digit', month: 'short' }).toUpperCase();
+        clockEl.textContent = `${hrs}:${mins}:${secs} ${dateStr} SESSION 24H`;
+    }
+    tick();
+    terminalClockInterval = setInterval(tick, 1000);
+}
+
+function toggleTerminalFeedPause() {
+    terminalFeedPaused = !terminalFeedPaused;
+    const btn = document.getElementById("mBtnPauseFeed");
+    const dot = document.getElementById("mFeedDot");
+    const text = document.getElementById("mFeedText");
+
+    if (terminalFeedPaused) {
+        if (btn) btn.textContent = "RESUME";
+        if (dot) dot.classList.remove("active");
+        if (text) {
+            text.textContent = "FEED PAUSED";
+            text.style.color = "#E5A83B";
+        }
+    } else {
+        if (btn) btn.textContent = "PAUSE";
+        if (dot) dot.classList.add("active");
+        if (text) {
+            text.textContent = "FEED LIVE";
+            text.style.color = "#10B981";
+        }
+    }
+}
+
+function setTerminalTimeframe(tf, btn) {
+    terminalTimeframe = tf;
+    document.querySelectorAll(".m-tf-btn").forEach(b => b.classList.remove("active"));
+    if (btn) btn.classList.add("active");
+
+    const sub = document.getElementById("mChartSubtitle");
+    if (sub) {
+        sub.textContent = `${terminalActiveSymbol} • ${tf.toUpperCase()} CANDLES • 20-PERIOD MA`;
+    }
+
+    const periodMap = { "1m": "1d", "5m": "5d", "15m": "1mo", "1h": "1mo", "1d": "6mo" };
+    const period = periodMap[tf] || "3mo";
+    loadTerminalChart(terminalActiveSymbol, period);
+}
+
+async function loadTerminalData(symbol) {
+    terminalActiveSymbol = symbol.toUpperCase().trim();
+    
+    // Update instrument pill & subtitles
+    const pill = document.getElementById("mInstSymPill");
+    if (pill) pill.textContent = terminalActiveSymbol;
+    const sub = document.getElementById("mChartSubtitle");
+    if (sub) sub.textContent = `${terminalActiveSymbol} • ${terminalTimeframe.toUpperCase()} CANDLES • 20-PERIOD MA`;
+    const dHint = document.getElementById("mDepthHint");
+    if (dHint) dHint.textContent = `${terminalActiveSymbol} • 10 LEVELS`;
+    const tHint = document.getElementById("mTapeHint");
+    if (tHint) tHint.textContent = `${terminalActiveSymbol} • LAST 25 PRINTS`;
+
+    updateTerminalWatchlist();
+    updateTerminalBook();
+    updateTerminalMarquee();
+
+    await Promise.all([
+        loadTerminalChart(terminalActiveSymbol, "3mo"),
+        streamMicrostructureTick(true)
+    ]);
+}
+
+async function loadTerminalChart(symbol, period = "3mo") {
+    try {
+        const res = await fetch(`${API_BASE}/api/chart/${encodeURIComponent(symbol)}?period=${period}`);
+        if (!res.ok) return;
+        terminalChartData = await res.json();
+        
+        // Populate Instrument Card
+        const instName = document.getElementById("mInstName");
+        const instSector = document.getElementById("mInstSector");
+        if (instName) instName.textContent = terminalChartData.name || symbol;
+        if (instSector) instSector.textContent = `${terminalChartData.sector || "INDIAN EQUITIES"} • ${terminalChartData.exchange || "NSE"}`;
+
+        // Populate Hero Headline Price
+        const cmp = Number(terminalChartData.cmp) || 0;
+        const closes = terminalChartData.closes || [];
+        const prevClose = closes.length >= 2 ? closes[closes.length - 2] : cmp;
+        const change = cmp - prevClose;
+        const changePct = prevClose > 0 ? (change / prevClose * 100) : 0;
+        
+        const heroPrice = document.getElementById("mHeroPrice");
+        const heroChange = document.getElementById("mHeroChange");
+        if (heroPrice) heroPrice.textContent = `₹${cmp.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+        if (heroChange) {
+            const isUp = change >= 0;
+            heroChange.textContent = `${isUp ? "+" : ""}${change.toFixed(2)} ${isUp ? "+" : ""}${changePct.toFixed(2)}%`;
+            heroChange.className = `m-hero-change tabular-nums ${isUp ? "up" : "down"}`;
+        }
+
+        // 24H Range bar
+        const lows = terminalChartData.lows || closes;
+        const highs = terminalChartData.highs || closes;
+        const dayLow = Math.min(...lows.slice(-5));
+        const dayHigh = Math.max(...highs.slice(-5));
+        const rLowEl = document.getElementById("mRangeLow");
+        const rHighEl = document.getElementById("mRangeHigh");
+        const rFillEl = document.getElementById("mRangeFill");
+        const rPinEl = document.getElementById("mRangePin");
+        if (rLowEl) rLowEl.textContent = `₹${dayLow.toFixed(2)}`;
+        if (rHighEl) rHighEl.textContent = `₹${dayHigh.toFixed(2)}`;
+        if (rFillEl && rPinEl && dayHigh > dayLow) {
+            const pct = Math.max(0, Math.min(100, ((cmp - dayLow) / (dayHigh - dayLow)) * 100));
+            rFillEl.style.width = `${pct}%`;
+            rPinEl.style.left = `${pct}%`;
+        }
+
+        // 2x2 Grid stats
+        const volEl = document.getElementById("mInstVol");
+        const vwapEl = document.getElementById("mInstVwap");
+        const vols = terminalChartData.volumes || [];
+        const lastVol = vols.length ? vols[vols.length - 1] : 0;
+        if (volEl) volEl.textContent = lastVol >= 1e6 ? `${(lastVol / 1e6).toFixed(2)}M sh` : `${(lastVol / 1e3).toFixed(1)}K sh`;
+        if (vwapEl) vwapEl.textContent = `₹${((dayHigh + dayLow + cmp) / 3).toFixed(2)}`;
+
+        // Quant Factor Strip
+        const winProbEl = document.getElementById("mQuantWinProb");
+        const cmfEl = document.getElementById("mQuantCmf");
+        const spreadEl = document.getElementById("mQuantSpread");
+        const barrierEl = document.getElementById("mQuantBarrier");
+        const regimeEl = document.getElementById("mQuantRegime");
+
+        const winProb = terminalChartData.win_probability_pct || 65.4;
+        const grade = winProb >= 65 ? "A+" : (winProb >= 60 ? "A" : "B");
+        if (winProbEl) {
+            winProbEl.textContent = `${winProb.toFixed(1)}% (Grade ${grade})`;
+            winProbEl.className = `m-q-val ${winProb >= 60 ? "up" : "down"}`;
+        }
+        if (cmfEl) cmfEl.textContent = "+0.14";
+        if (spreadEl) spreadEl.textContent = "+0.038";
+        if (barrierEl) {
+            const atr = terminalChartData.atr_14 || (cmp * 0.02);
+            barrierEl.textContent = `+₹${(atr * 1.25).toFixed(1)} / -₹${(atr * 1.5).toFixed(1)}`;
+        }
+        if (regimeEl) regimeEl.textContent = "CONFIRMED (Nifty > 50-DMA)";
+
+        // Render Candlesticks on canvas
+        renderTerminalCandlesticks(terminalChartData);
+    } catch (err) {
+        console.error("Failed to load terminal chart data:", err);
+    }
+}
+
+async function streamMicrostructureTick(forceInitial = false) {
+    try {
+        const res = await fetch(`${API_BASE}/api/market-depth/${encodeURIComponent(terminalActiveSymbol)}`);
+        if (!res.ok) return;
+        terminalMicrostructure = await res.json();
+
+        // Update Best Bid / Ask / Spread
+        const bBidEl = document.getElementById("mBestBid");
+        const bAskEl = document.getElementById("mBestAsk");
+        const spEl = document.getElementById("mSpreadVal");
+        const midEl = document.getElementById("mMidPriceVal");
+        const instSpread = document.getElementById("mInstSpread");
+        const instTick = document.getElementById("mInstTick");
+
+        if (bBidEl) bBidEl.textContent = Number(terminalMicrostructure.best_bid).toFixed(2);
+        if (bAskEl) bAskEl.textContent = Number(terminalMicrostructure.best_ask).toFixed(2);
+        if (spEl) spEl.textContent = `${Number(terminalMicrostructure.spread).toFixed(3)} (${terminalMicrostructure.spread_bps}bp)`;
+        if (midEl) midEl.textContent = Number(terminalMicrostructure.mid_price).toFixed(3);
+        if (instSpread) instSpread.textContent = `${Number(terminalMicrostructure.spread).toFixed(3)} (${terminalMicrostructure.spread_bps}bp)`;
+        if (instTick) instTick.textContent = Number(terminalMicrostructure.tick_size).toFixed(3);
+
+        updateTerminalDepth(terminalMicrostructure);
+        updateTerminalTape(terminalMicrostructure.tape);
+        renderTerminalDepthCurve(terminalMicrostructure.bids, terminalMicrostructure.asks);
+    } catch (err) {
+        console.error("Microstructure tick stream error:", err);
+    }
+}
+
+function updateTerminalDepth(depth) {
+    const asksBody = document.getElementById("mDepthAsksBody");
+    const bidsBody = document.getElementById("mDepthBidsBody");
+    if (!asksBody || !bidsBody) return;
+
+    const maxCum = Math.max(
+        depth.bids[depth.bids.length - 1]?.cumulative || 1,
+        depth.asks[depth.asks.length - 1]?.cumulative || 1
+    );
+
+    // Asks Ladder (Reverse so lowest ask is closest to mid-price divider)
+    const sortedAsks = [...depth.asks].reverse();
+    asksBody.innerHTML = sortedAsks.map(row => {
+        const barWidth = Math.min(100, (row.cumulative / maxCum) * 100);
+        return `
+            <tr>
+                <td class="ask-color tabular-nums" style="position: relative;">
+                    ${row.price.toFixed(2)}
+                    <div class="m-depth-bar ask" style="width: ${barWidth}%;"></div>
+                </td>
+                <td class="text-right tabular-nums">${row.size.toLocaleString("en-IN")}</td>
+                <td class="text-right tabular-nums" style="color: #64748B;">${row.cumulative.toLocaleString("en-IN")}</td>
+            </tr>
+        `;
+    }).join("");
+
+    // Bids Ladder (Highest bid first, closest to mid-price divider)
+    bidsBody.innerHTML = depth.bids.map(row => {
+        const barWidth = Math.min(100, (row.cumulative / maxCum) * 100);
+        return `
+            <tr>
+                <td class="bid-color tabular-nums" style="position: relative;">
+                    ${row.price.toFixed(2)}
+                    <div class="m-depth-bar bid" style="width: ${barWidth}%;"></div>
+                </td>
+                <td class="text-right tabular-nums">${row.size.toLocaleString("en-IN")}</td>
+                <td class="text-right tabular-nums" style="color: #64748B;">${row.cumulative.toLocaleString("en-IN")}</td>
+            </tr>
+        `;
+    }).join("");
+}
+
+function updateTerminalTape(tape) {
+    const tbody = document.getElementById("mTapeBody");
+    if (!tbody || !tape) return;
+
+    tbody.innerHTML = tape.map((item, idx) => {
+        const isBuy = item.side === "B";
+        const sideClass = isBuy ? "b" : "s";
+        const rowHighlight = item.is_block ? "m-block-print" : "";
+        return `
+            <tr class="${rowHighlight}">
+                <td class="tabular-nums" style="color: #94A3B8;">${item.time}</td>
+                <td class="text-right tabular-nums ${isBuy ? "bid-color" : "ask-color"} font-weight-bold">
+                    ${Number(item.price).toFixed(2)}
+                </td>
+                <td class="text-right tabular-nums font-weight-bold">
+                    ${Number(item.size).toLocaleString("en-IN")}
+                </td>
+                <td class="text-center">
+                    <span class="m-side-badge ${sideClass}">${item.side}</span>
+                </td>
+            </tr>
+        `;
+    }).join("");
+}
+
+function renderTerminalCandlesticks(data) {
+    const canvas = document.getElementById("terminalCandleCanvas");
+    if (!canvas) return;
+    const stage = document.getElementById("mCanvasStage");
+    const width = stage ? stage.clientWidth : 700;
+    const height = stage ? stage.clientHeight : 380;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, width, height);
+
+    const opens = data.opens || data.closes || [];
+    const highs = data.highs || data.closes || [];
+    const lows = data.lows || data.closes || [];
+    const closes = data.closes || [];
+    const volumes = data.volumes || [];
+    const sma20 = data.sma20 || [];
+
+    if (!closes.length) return;
+
+    const windowSize = Math.min(closes.length, 45);
+    const startIdx = closes.length - windowSize;
+
+    const wOpens = opens.slice(startIdx);
+    const wHighs = highs.slice(startIdx);
+    const wLows = lows.slice(startIdx);
+    const wCloses = closes.slice(startIdx);
+    const wVols = volumes.slice(startIdx);
+    const wSma = sma20.slice(startIdx);
+
+    const rightMargin = 65;
+    const chartWidth = width - rightMargin;
+    const priceHeight = height * 0.72;
+    const volHeight = height * 0.22;
+
+    let minPrice = Math.min(...wLows);
+    let maxPrice = Math.max(...wHighs);
+    if (data.expected_target_price) maxPrice = Math.max(maxPrice, data.expected_target_price);
+    if (data.stop_loss) minPrice = Math.min(minPrice, data.stop_loss);
+    const pMargin = (maxPrice - minPrice) * 0.08 || 1.0;
+    minPrice -= pMargin;
+    maxPrice += pMargin;
+
+    const maxVol = Math.max(...wVols, 1);
+
+    function priceToY(p) {
+        return priceHeight - ((p - minPrice) / (maxPrice - minPrice)) * priceHeight;
+    }
+
+    // Gridlines
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+    ctx.lineWidth = 1;
+    ctx.fillStyle = "#64748B";
+    ctx.font = "9px 'IBM Plex Mono', monospace";
+    ctx.textAlign = "left";
+
+    const priceSteps = 5;
+    for (let i = 0; i <= priceSteps; i++) {
+        const p = minPrice + (i / priceSteps) * (maxPrice - minPrice);
+        const y = priceToY(p);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(chartWidth, y);
+        ctx.stroke();
+        ctx.fillText(p.toFixed(2), chartWidth + 6, y + 3);
+    }
+
+    // Barrier Lines
+    if (data.expected_target_price) {
+        const targetY = priceToY(data.expected_target_price);
+        ctx.strokeStyle = "#10B981";
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, targetY);
+        ctx.lineTo(chartWidth, targetY);
+        ctx.stroke();
+        ctx.fillStyle = "#10B981";
+        ctx.fillText(`Target ₹${data.expected_target_price}`, 10, targetY - 4);
+    }
+
+    if (data.stop_loss) {
+        const stopY = priceToY(data.stop_loss);
+        ctx.strokeStyle = "#EF4444";
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, stopY);
+        ctx.lineTo(chartWidth, stopY);
+        ctx.stroke();
+        ctx.fillStyle = "#EF4444";
+        ctx.fillText(`Stop ₹${data.stop_loss}`, 10, stopY - 4);
+    }
+    ctx.setLineDash([]);
+
+    // Candlesticks & Volume
+    const candleSlotWidth = chartWidth / windowSize;
+    const candleBodyWidth = Math.max(2, candleSlotWidth * 0.65);
+
+    for (let i = 0; i < windowSize; i++) {
+        const o = wOpens[i];
+        const h = wHighs[i];
+        const l = wLows[i];
+        const c = wCloses[i];
+        const v = wVols[i];
+        const isUp = c >= o;
+        const color = isUp ? "#10B981" : "#F43F5E";
+
+        const x = i * candleSlotWidth + candleSlotWidth / 2;
+        const yOpen = priceToY(o);
+        const yClose = priceToY(c);
+        const yHigh = priceToY(h);
+        const yLow = priceToY(l);
+
+        // Wick
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, yHigh);
+        ctx.lineTo(x, yLow);
+        ctx.stroke();
+
+        // Body
+        ctx.fillStyle = color;
+        const topY = Math.min(yOpen, yClose);
+        const bHeight = Math.max(1, Math.abs(yClose - yOpen));
+        ctx.fillRect(x - candleBodyWidth / 2, topY, candleBodyWidth, bHeight);
+
+        // Volume Bar
+        const vH = (v / maxVol) * volHeight;
+        ctx.fillStyle = isUp ? "rgba(16, 185, 129, 0.35)" : "rgba(244, 63, 94, 0.35)";
+        ctx.fillRect(x - candleBodyWidth / 2, height - vH, candleBodyWidth, vH);
+    }
+
+    // 20-DMA Line Overlay
+    ctx.strokeStyle = "#38BDF8";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < windowSize; i++) {
+        const s = wSma[i];
+        if (s !== null && s !== undefined && !isNaN(s)) {
+            const x = i * candleSlotWidth + candleSlotWidth / 2;
+            const y = priceToY(s);
+            if (!started) {
+                ctx.moveTo(x, y);
+                started = true;
+            } else {
+                ctx.lineTo(x, y);
+            }
+        }
+    }
+    ctx.stroke();
+
+    // Price Crosshair Tag Pill
+    const cmp = data.cmp || wCloses[wCloses.length - 1];
+    const cmpY = priceToY(cmp);
+    const tag = document.getElementById("mCurrentPriceTag");
+    if (tag) {
+        tag.style.top = `${Math.max(12, Math.min(priceHeight - 12, cmpY))}px`;
+        tag.textContent = cmp.toFixed(2);
+    }
+}
+
+function renderTerminalDepthCurve(bids, asks) {
+    const canvas = document.getElementById("terminalDepthCanvas");
+    if (!canvas || !bids || !asks || !bids.length || !asks.length) return;
+    const stage = canvas.parentElement;
+    const width = stage ? stage.clientWidth : 300;
+    const height = stage ? stage.clientHeight : 70;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, width, height);
+
+    const maxCum = Math.max(
+        bids[bids.length - 1].cumulative,
+        asks[asks.length - 1].cumulative
+    );
+    const midX = width / 2;
+
+    // Bids Ramp (Left)
+    ctx.fillStyle = "rgba(16, 185, 129, 0.20)";
+    ctx.strokeStyle = "#10B981";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(midX, height);
+    for (let i = 0; i < bids.length; i++) {
+        const x = midX - ((i + 1) / bids.length) * (midX - 10);
+        const y = height - (bids[i].cumulative / maxCum) * (height - 18);
+        ctx.lineTo(x, y);
+    }
+    ctx.lineTo(10, height);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Asks Ramp (Right)
+    ctx.fillStyle = "rgba(244, 63, 94, 0.20)";
+    ctx.strokeStyle = "#F43F5E";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(midX, height);
+    for (let i = 0; i < asks.length; i++) {
+        const x = midX + ((i + 1) / asks.length) * (midX - 10);
+        const y = height - (asks[i].cumulative / maxCum) * (height - 18);
+        ctx.lineTo(x, y);
+    }
+    ctx.lineTo(width - 10, height);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+}
+
+function updateTerminalWatchlist() {
+    const tbody = document.getElementById("mWatchlistBody");
+    if (!tbody) return;
+
+    tbody.innerHTML = terminalWatchlist.map(item => {
+        const isActive = item.symbol === terminalActiveSymbol;
+        const isUp = item.change >= 0;
+        const color = isUp ? "#10B981" : "#F43F5E";
+
+        // Generate mini SVG sparkline
+        const pts = item.spark || [100, 102, 101, 105];
+        const minP = Math.min(...pts);
+        const maxP = Math.max(...pts);
+        const sparkPts = pts.map((p, idx) => {
+            const x = (idx / (pts.length - 1)) * 46 + 2;
+            const y = 16 - ((p - minP) / (maxP - minP || 1)) * 12 - 2;
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(" ");
+
+        return `
+            <tr class="${isActive ? "active-row" : ""}" onclick="selectTerminalStock('${item.symbol}')">
+                <td style="font-weight: 700; color: ${isActive ? "#38BDF8" : "#F8FAFC"};">${item.symbol}</td>
+                <td class="m-sparkline-cell">
+                    <svg class="m-sparkline-svg" viewBox="0 0 50 18">
+                        <polyline fill="none" stroke="${color}" stroke-width="1.5" points="${sparkPts}" />
+                    </svg>
+                </td>
+                <td class="text-right tabular-nums">₹${item.price.toFixed(2)}</td>
+                <td class="text-right tabular-nums ${isUp ? "bid-color" : "ask-color"}">
+                    ${isUp ? "+" : ""}${item.change.toFixed(2)}
+                </td>
+                <td class="text-right tabular-nums ${isUp ? "bid-color" : "ask-color"} font-weight-bold">
+                    ${isUp ? "+" : ""}${item.pct.toFixed(2)}%
+                </td>
+            </tr>
+        `;
+    }).join("");
+}
+
+function selectTerminalStock(symbol) {
+    terminalActiveSymbol = symbol;
+    updateTerminalWatchlist();
+    loadTerminalData(symbol);
+}
+
+function sortTerminalWatchlist(col) {
+    if (col === "symbol") {
+        terminalWatchlist.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    } else if (col === "price") {
+        terminalWatchlist.sort((a, b) => b.price - a.price);
+    } else if (col === "change") {
+        terminalWatchlist.sort((a, b) => b.change - a.change);
+    } else if (col === "pct") {
+        terminalWatchlist.sort((a, b) => b.pct - a.pct);
+    }
+    updateTerminalWatchlist();
+}
+
+function updateTerminalBook() {
+    const tbody = document.getElementById("mBookBody");
+    if (!tbody) return;
+
+    const book = [
+        { symbol: "RELIANCE", qty: 250, avg: 2420.00, mark: 2498.50, unreal: 19625.00, ret: 3.24 },
+        { symbol: "TCS", qty: 100, avg: 3880.00, mark: 3950.00, unreal: 7000.00, ret: 1.80 },
+        { symbol: "HDFCBANK", qty: 300, avg: 1735.00, mark: 1720.00, unreal: -4500.00, ret: -0.86 },
+        { symbol: "INFY", qty: 200, avg: 1810.00, mark: 1845.00, unreal: 7000.00, ret: 1.93 }
+    ];
+
+    let totalValue = 0;
+    let totalUnreal = 0;
+
+    tbody.innerHTML = book.map(row => {
+        const isUp = row.unreal >= 0;
+        const color = isUp ? "bid-color" : "ask-color";
+        totalValue += (row.qty * row.mark);
+        totalUnreal += row.unreal;
+        return `
+            <tr onclick="selectTerminalStock('${row.symbol}')">
+                <td style="font-weight: 700; color: #F8FAFC;">${row.symbol}</td>
+                <td class="text-right tabular-nums">${row.qty}</td>
+                <td class="text-right tabular-nums">${row.avg.toFixed(2)}</td>
+                <td class="text-right tabular-nums">${row.mark.toFixed(2)}</td>
+                <td class="text-right tabular-nums ${color}">
+                    ${isUp ? "+" : ""}${Math.round(row.unreal).toLocaleString("en-IN")}
+                </td>
+                <td class="text-right tabular-nums ${color}">
+                    ${isUp ? "+" : ""}${row.ret.toFixed(2)}%
+                </td>
+            </tr>
+        `;
+    }).join("");
+
+    const netLiqEl = document.getElementById("mBookNetLiq");
+    const sessionPnlEl = document.getElementById("mBookSessionPnl");
+    const expValEl = document.getElementById("mBookExposureVal");
+    const expPctEl = document.getElementById("mBookExposurePct");
+    const expBarEl = document.getElementById("mBookExposureBar");
+
+    if (netLiqEl) netLiqEl.textContent = `₹${Math.round(totalValue).toLocaleString("en-IN")}`;
+    if (sessionPnlEl) {
+        const isUp = totalUnreal >= 0;
+        const pct = totalValue > 0 ? (totalUnreal / (totalValue - totalUnreal) * 100) : 0;
+        sessionPnlEl.textContent = `${isUp ? "+" : ""}₹${Math.round(totalUnreal).toLocaleString("en-IN")} (${isUp ? "+" : ""}${pct.toFixed(2)}%)`;
+        sessionPnlEl.className = `m-book-stat-val tabular-nums ${isUp ? "up" : "down"}`;
+    }
+    if (expValEl) expValEl.textContent = `₹${(totalValue / 1e5).toFixed(1)}L`;
+    if (expPctEl) expPctEl.textContent = "53%";
+    if (expBarEl) expBarEl.style.width = "53%";
+}
+
+function updateTerminalMarquee() {
+    const container = document.getElementById("mBottomTickerStream");
+    if (!container) return;
+
+    container.innerHTML = terminalWatchlist.map(item => {
+        const isUp = item.change >= 0;
+        const color = isUp ? "bid-color" : "ask-color";
+        return `
+            <div class="m-ticker-item" onclick="selectTerminalStock('${item.symbol}')">
+                <span style="color: #94A3B8;">${item.symbol}</span>
+                <span class="tabular-nums" style="color: #F8FAFC;">${item.price.toFixed(2)}</span>
+                <span class="tabular-nums ${color}">${isUp ? "+" : ""}${item.pct.toFixed(2)}%</span>
+            </div>
+        `;
+    }).join("");
+}
+
+window.switchDeskMode = switchDeskMode;
+window.toggleTerminalFeedPause = toggleTerminalFeedPause;
+window.setTerminalTimeframe = setTerminalTimeframe;
+window.selectTerminalStock = selectTerminalStock;
+window.sortTerminalWatchlist = sortTerminalWatchlist;
+

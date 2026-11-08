@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PredictaStock - Market Desk</title>
     <meta name="description" content="PredictaStock market desk: high-conviction 5-day volatility scenarios, FIFO portfolio engine, and point-in-time backtested strategy lab for Indian equities (NSE/BSE).">
-    <link rel="stylesheet" href="/static/css/terminal.css?v=5.6.1">
+    <link rel="stylesheet" href="/static/css/terminal.css?v=5.7.0">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%2310B981%22 stroke-width=%222.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polyline points=%2222 7 13.5 15.5 8.5 10.5 2 17%22></polyline><polyline points=%2216 7 22 7 22 13%22></polyline></svg>">
     <!-- Chart.js Engine -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -253,7 +253,23 @@
                      VIEW 1: MARKET DESK (CHART, INDICATORS, WATCHLIST)
                      ======================================================== -->
                 <section id="view-charts" class="view-panel active">
-                    <div class="command-center-grid">
+                    <!-- Desk Sub-Header with Mode Switcher -->
+                    <div class="desk-sub-header">
+                        <div class="desk-mode-toggle-group">
+                            <button class="desk-mode-btn active" id="btnDeskStandard" onclick="switchDeskMode('standard')">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+                                Standard Desk
+                            </button>
+                            <button class="desk-mode-btn" id="btnDeskTerminal" onclick="switchDeskMode('terminal')">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+                                Meridian Terminal IV
+                                <span class="pro-live-tag">LIVE L2 &bull; TAPE</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="standardDeskWrapper">
+                        <div class="command-center-grid">
                         <!-- Main Left Column: Interactive Financial Chart & Rationale -->
                         <div class="panel" style="margin-bottom: 0;">
                             <div class="panel-header">
@@ -434,6 +450,310 @@
                             </div>
                         </div>
                     </div>
+                    </div><!-- /standardDeskWrapper -->
+
+                    <!-- ========================================================
+                         PRO TERMINAL IV (MERIDIAN BOARD INSTITUTIONAL L2 / TAPE)
+                         ======================================================== -->
+                    <div id="proTerminalWrapper" style="display: none;">
+                        <div class="meridian-terminal">
+                            <!-- TOP STATUS BAR -->
+                            <div class="meridian-topbar">
+                                <div class="m-top-left">
+                                    <div class="m-brand-badge">
+                                        <span class="m-brand-bars">
+                                            <span></span><span></span><span></span>
+                                        </span>
+                                        <span class="m-brand-title">Meridian Board</span>
+                                        <span class="m-brand-sub">TERMINAL IV &bull; NSE QUANT DESK</span>
+                                    </div>
+                                    <span class="m-badge-simulated" id="mSimPill">SIMULATED</span>
+                                    <span class="m-top-disclaimer" id="mTopDisclaimer">
+                                        Every instrument, quote, print and position on this page is synthetic. No real security is quoted here.
+                                    </span>
+                                </div>
+                                <div class="m-top-right">
+                                    <div class="m-feed-indicator">
+                                        <span class="m-feed-dot active" id="mFeedDot"></span>
+                                        <span class="m-feed-label" id="mFeedText">FEED LIVE</span>
+                                    </div>
+                                    <button class="m-btn-pause" id="mBtnPauseFeed" onclick="toggleTerminalFeedPause()">PAUSE</button>
+                                    <div class="m-session-clock tabular-nums" id="mSessionClock">00:00:00 IST</div>
+                                </div>
+                            </div>
+
+                            <!-- MAIN 3-COLUMN TERMINAL GRID -->
+                            <div class="meridian-grid">
+                                <!-- ================= LEFT COLUMN ================= -->
+                                <div class="meridian-col meridian-col-left">
+                                    <!-- 1. Watchlist -->
+                                    <div class="m-panel m-panel-watchlist">
+                                        <div class="m-panel-header">
+                                            <span class="m-panel-title">WATCHLIST</span>
+                                            <span class="m-panel-hint">CLICK A COLUMN TO SORT</span>
+                                        </div>
+                                        <div class="m-watchlist-table-wrapper">
+                                            <table class="m-table m-table-watchlist">
+                                                <thead>
+                                                    <tr>
+                                                        <th onclick="sortTerminalWatchlist('symbol')">SYM</th>
+                                                        <th>TREND</th>
+                                                        <th class="text-right" onclick="sortTerminalWatchlist('price')">LAST</th>
+                                                        <th class="text-right" onclick="sortTerminalWatchlist('change')">CHG</th>
+                                                        <th class="text-right" onclick="sortTerminalWatchlist('pct')">24h %</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="mWatchlistBody">
+                                                    <!-- Populated dynamically -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+
+                                    <!-- 2. Instrument Card -->
+                                    <div class="m-panel m-panel-instrument">
+                                        <div class="m-panel-header">
+                                            <span class="m-panel-title">INSTRUMENT</span>
+                                            <span class="m-sym-pill" id="mInstSymPill">RELIANCE</span>
+                                        </div>
+                                        <div class="m-inst-content">
+                                            <div class="m-inst-name" id="mInstName">Reliance Industries Limited</div>
+                                            <div class="m-inst-sector" id="mInstSector">ENERGY &bull; OIL & GAS</div>
+                                            
+                                            <!-- 24h Range Bar -->
+                                            <div class="m-range-bar-block">
+                                                <div class="m-range-labels">
+                                                    <span class="tabular-nums" id="mRangeLow">2,410.00</span>
+                                                    <span class="m-range-mid-label">24h range</span>
+                                                    <span class="tabular-nums" id="mRangeHigh">2,530.00</span>
+                                                </div>
+                                                <div class="m-range-track">
+                                                    <div class="m-range-fill" id="mRangeFill" style="width: 65%;"></div>
+                                                    <div class="m-range-pin" id="mRangePin" style="left: 65%;"></div>
+                                                </div>
+                                            </div>
+
+                                            <!-- 2x2 Metric Grid -->
+                                            <div class="m-inst-grid">
+                                                <div class="m-inst-metric">
+                                                    <span class="m-metric-label">24H VOLUME</span>
+                                                    <span class="m-metric-val tabular-nums" id="mInstVol">--</span>
+                                                </div>
+                                                <div class="m-inst-metric">
+                                                    <span class="m-metric-label">24H VWAP</span>
+                                                    <span class="m-metric-val tabular-nums" id="mInstVwap">--</span>
+                                                </div>
+                                                <div class="m-inst-metric">
+                                                    <span class="m-metric-label">SPREAD</span>
+                                                    <span class="m-metric-val tabular-nums" id="mInstSpread">0.050 (0.2 bp)</span>
+                                                </div>
+                                                <div class="m-inst-metric">
+                                                    <span class="m-metric-label">TICK SIZE</span>
+                                                    <span class="m-metric-val tabular-nums" id="mInstTick">0.050</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 3. Book & P&L -->
+                                    <div class="m-panel m-panel-book">
+                                        <div class="m-panel-header">
+                                            <span class="m-panel-title">BOOK &amp; P&amp;L</span>
+                                            <span class="m-panel-hint">MARKED TO LAST</span>
+                                        </div>
+                                        <div class="m-book-table-wrapper">
+                                            <table class="m-table m-table-book">
+                                                <thead>
+                                                    <tr>
+                                                        <th>SYM</th>
+                                                        <th class="text-right">QTY</th>
+                                                        <th class="text-right">AVG</th>
+                                                        <th class="text-right">MARK</th>
+                                                        <th class="text-right">UNREAL</th>
+                                                        <th class="text-right">RET</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="mBookBody">
+                                                    <!-- Populated from FIFO Portfolio -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div class="m-book-footer">
+                                            <div class="m-book-stat-row">
+                                                <span class="m-book-stat-label">NET LIQUIDATION</span>
+                                                <span class="m-book-stat-val tabular-nums" id="mBookNetLiq">&#8377;--</span>
+                                            </div>
+                                            <div class="m-book-stat-row">
+                                                <span class="m-book-stat-label">SESSION P&amp;L</span>
+                                                <span class="m-book-stat-val tabular-nums up" id="mBookSessionPnl">+&#8377;0 (0.00%)</span>
+                                            </div>
+                                            <div class="m-exposure-row">
+                                                <span class="m-exposure-label">EXPOSURE</span>
+                                                <div class="m-exposure-val tabular-nums">
+                                                    <span id="mBookExposureVal">&#8377;0</span> &ndash; <span id="mBookExposurePct">0%</span> of limit
+                                                </div>
+                                            </div>
+                                            <div class="m-exposure-track">
+                                                <div class="m-exposure-fill" id="mBookExposureBar" style="width: 0%;"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- ================= CENTER COLUMN ================= -->
+                                <div class="meridian-col meridian-col-center">
+                                    <div class="m-panel m-panel-chart">
+                                        <div class="m-chart-topbar">
+                                            <div class="m-chart-meta">
+                                                <span class="m-panel-title">PRICE &amp; VOLUME</span>
+                                                <span class="m-chart-subtitle" id="mChartSubtitle">ORBL &bull; 5M CANDLES &bull; 20-PERIOD MA</span>
+                                            </div>
+                                            <div class="m-chart-tf-pills">
+                                                <button class="m-tf-btn" onclick="setTerminalTimeframe('1m', this)">1M</button>
+                                                <button class="m-tf-btn active" onclick="setTerminalTimeframe('5m', this)">5M</button>
+                                                <button class="m-tf-btn" onclick="setTerminalTimeframe('15m', this)">15M</button>
+                                                <button class="m-tf-btn" onclick="setTerminalTimeframe('1h', this)">1H</button>
+                                                <button class="m-tf-btn" onclick="setTerminalTimeframe('1d', this)">1D</button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Price Headline Strip -->
+                                        <div class="m-price-headline">
+                                            <span class="m-hero-price tabular-nums" id="mHeroPrice">&#8377;--</span>
+                                            <span class="m-hero-change tabular-nums up" id="mHeroChange">+0.00 +0.00%</span>
+                                            <span class="m-hero-sub">&bull; 24h &bull; <span style="color: #38BDF8;">MA 20</span> &bull; <span style="color: #64748B;">VOLUME</span></span>
+                                        </div>
+
+                                        <!-- High-Performance Candlestick & Volume Canvas Stage -->
+                                        <div class="m-canvas-stage" id="mCanvasStage">
+                                            <canvas id="terminalCandleCanvas"></canvas>
+                                            <div class="m-price-tag-pill tabular-nums" id="mCurrentPriceTag">--</div>
+                                        </div>
+
+                                        <!-- Quant Alpha Bar below chart -->
+                                        <div class="m-quant-alpha-strip" id="mQuantAlphaStrip">
+                                            <div class="m-quant-cell">
+                                                <span class="m-q-label">ML CALIBRATED P(WIN)</span>
+                                                <span class="m-q-val up" id="mQuantWinProb">-- (Grade A+)</span>
+                                            </div>
+                                            <div class="m-quant-cell">
+                                                <span class="m-q-label">20D CHAIKIN FLOW</span>
+                                                <span class="m-q-val up" id="mQuantCmf">--</span>
+                                            </div>
+                                            <div class="m-quant-cell">
+                                                <span class="m-q-label">INST OVERNIGHT SPREAD</span>
+                                                <span class="m-q-val up" id="mQuantSpread">--</span>
+                                            </div>
+                                            <div class="m-quant-cell">
+                                                <span class="m-q-label">5D ATR BARRIER</span>
+                                                <span class="m-q-val" id="mQuantBarrier">+1.25x / -1.50x ATR</span>
+                                            </div>
+                                            <div class="m-quant-cell">
+                                                <span class="m-q-label">REGIME HARD GATE</span>
+                                                <span class="m-q-val up" id="mQuantRegime">CONFIRMED (Nifty &gt; 50-DMA)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- ================= RIGHT COLUMN ================= -->
+                                <div class="meridian-col meridian-col-right">
+                                    <!-- 1. Level 2 Market Depth -->
+                                    <div class="m-panel m-panel-depth">
+                                        <div class="m-panel-header">
+                                            <span class="m-panel-title">DEPTH</span>
+                                            <span class="m-panel-hint" id="mDepthHint">10 LEVELS</span>
+                                        </div>
+                                        
+                                        <div class="m-depth-summary-strip">
+                                            <div class="m-bid-ask-box">
+                                                <div class="m-ba-item">
+                                                    <span class="m-ba-sub">BID</span>
+                                                    <span class="m-ba-val bid-color tabular-nums" id="mBestBid">--</span>
+                                                </div>
+                                                <div class="m-ba-item text-right">
+                                                    <span class="m-ba-sub">ASK</span>
+                                                    <span class="m-ba-val ask-color tabular-nums" id="mBestAsk">--</span>
+                                                </div>
+                                            </div>
+                                            <div class="m-spread-badge tabular-nums">
+                                                SPREAD <strong id="mSpreadVal">0.050 (0.2bp)</strong>
+                                            </div>
+                                        </div>
+
+                                        <!-- Depth Table Ladder -->
+                                        <div class="m-depth-table-wrapper">
+                                            <table class="m-table m-table-depth">
+                                                <thead>
+                                                    <tr>
+                                                        <th>PRICE</th>
+                                                        <th class="text-right">SIZE</th>
+                                                        <th class="text-right">CUMULATIVE</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="mDepthAsksBody">
+                                                    <!-- Asks (Red) -->
+                                                </tbody>
+                                            </table>
+                                            
+                                            <div class="m-mid-market-divider">
+                                                <span>MID <strong id="mMidPriceVal" class="tabular-nums">--</strong></span>
+                                                <span>1 TICK</span>
+                                            </div>
+
+                                            <table class="m-table m-table-depth">
+                                                <tbody id="mDepthBidsBody">
+                                                    <!-- Bids (Green) -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                        <!-- Cumulative Depth Staircase Canvas -->
+                                        <div class="m-depth-curve-stage">
+                                            <canvas id="terminalDepthCanvas"></canvas>
+                                            <div class="m-depth-curve-legend">
+                                                <span>CUMULATIVE BIDS</span>
+                                                <span>CUMULATIVE ASKS</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 2. Time & Sales Tape -->
+                                    <div class="m-panel m-panel-tape">
+                                        <div class="m-panel-header">
+                                            <span class="m-panel-title">TIME &amp; SALES</span>
+                                            <span class="m-panel-hint" id="mTapeHint">LAST 25 PRINTS</span>
+                                        </div>
+                                        <div class="m-tape-table-wrapper">
+                                            <table class="m-table m-table-tape">
+                                                <thead>
+                                                    <tr>
+                                                        <th>TIME</th>
+                                                        <th class="text-right">PRICE</th>
+                                                        <th class="text-right">SIZE</th>
+                                                        <th class="text-center">B/S</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="mTapeBody">
+                                                    <!-- Live Trade Prints -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- BOTTOM TICKER MARQUEE TAPE -->
+                            <div class="meridian-bottom-tape">
+                                <div class="m-ticker-stream" id="mBottomTickerStream">
+                                    <!-- Populated dynamically -->
+                                </div>
+                                <div class="m-bottom-disclaimer">
+                                    Simulated data. Prices follow a GARCH(1,1) random walk with volatility clustering, Poisson jumps and mean reversion to a drifting anchor; print sizes are heavy-tailed and scaled to instantaneous volatility, so volume rises with it. Meridian Board is an institutional exchange terminal view designed for PredictaStock.
+                                </div>
+                            </div>
+                        </div>
+                    </div><!-- /proTerminalWrapper -->
                 </section>
 
                 <!-- ========================================================
@@ -1438,7 +1758,7 @@
     <!-- Toast Notification Container -->
     <div id="toastContainer"></div>
 
-    <script src="/static/js/app.js?v=5.6.2"></script>
+    <script src="/static/js/app.js?v=5.7.0"></script>
     <script src="/static/js/vendor/orbs.bundle.js?v=5.2.0"></script>
 </body>
 </html>
