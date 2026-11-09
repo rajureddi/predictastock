@@ -57,8 +57,8 @@ NSE_HOLIDAYS = {
     date(2026, 9, 14),   # Ganesh Chaturthi
     date(2026, 10, 2),   # Mahatma Gandhi Jayanti
     date(2026, 10, 20),  # Dussehra
-    date(2026, 11, 8),   # Diwali Laxmi Pujan
-    date(2026, 11, 9),   # Diwali Balipratipada
+    date(2026, 11, 8),   # Diwali Laxmi Pujan (Sunday Muhurat)
+    date(2026, 11, 10),  # Diwali Balipratipada
     date(2026, 11, 24),  # Gurunanak Jayanti
     date(2026, 12, 25),  # Christmas
 }

@@ -1087,6 +1087,7 @@ def generate_daily_recommendations(
             logger.info(f"Existing recommendation batch found for {rec_date_str} ({count} records). Returning existing batch.")
             conn.close()
             return get_latest_recommendations(limit=MAX_RECOMMENDATIONS_PER_DAY)
+    conn.close()
 
     # Calculate 5th trading session evaluation date
     eval_end_date = get_nth_trading_day(parsed_date, 5)
@@ -1101,6 +1102,9 @@ def generate_daily_recommendations(
 
     top_picks, total_universe_count = select_present_engine_picks(as_of_date=None)
     
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
     if not top_picks:
         logger.warning(f"No stocks passed screening criteria for {rec_date_str}.")
         update_scan_progress(

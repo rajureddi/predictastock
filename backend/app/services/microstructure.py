@@ -203,3 +203,4 @@ def get_market_microstructure(
         "is_simulated": True,
         "engine": "PredictaStock Microstructure GARCH/Poisson Streamer (v5)"
     }
+

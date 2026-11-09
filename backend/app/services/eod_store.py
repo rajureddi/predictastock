@@ -164,7 +164,8 @@ def _expected_sessions(trading_days: int, end: Optional[date] = None) -> List[da
         cursor_day -= timedelta(days=1)  # today's files publish in the evening
     sessions: List[date] = []
     while len(sessions) < trading_days:
-        if is_trading_day(cursor_day):
+        nse_local = os.path.join(_bhav_dir("NSE"), f"sec_bhavdata_full_{cursor_day.strftime('%d%m%Y')}.csv")
+        if is_trading_day(cursor_day) or os.path.exists(nse_local):
             sessions.append(cursor_day)
         cursor_day -= timedelta(days=1)
     return sorted(sessions)
